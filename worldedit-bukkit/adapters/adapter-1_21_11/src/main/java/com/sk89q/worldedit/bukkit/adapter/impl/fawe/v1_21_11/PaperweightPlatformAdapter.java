@@ -265,7 +265,6 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         }
         //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
-            // The future is completed by the region thread owning the chunk. There is no main thread to fall back to.
             return serverLevel
                     .getWorld()
                     .getChunkAtAsync(chunkX, chunkZ, true, true)
@@ -319,7 +318,6 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
                 addTicket(serverLevel, chunkX, chunkZ);
                 return loaded;
             }
-            // A tick thread may only load chunks of its own region synchronously
             if (Bukkit.isOwnedByCurrentRegion(serverLevel.getWorld(), chunkX, chunkZ)) {
                 return serverLevel.getChunk(chunkX, chunkZ);
             }
@@ -355,7 +353,7 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
     }
 
     private static void addTicket(ServerLevel serverLevel, int chunkX, int chunkZ) {
-        //FAWE start - Folia: there is no main thread executor; adding a ticket is thread-safe in the chunk system
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             serverLevel
                     .getChunkSource()
@@ -425,16 +423,14 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
                 NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
             }
         };
-        //FAWE start - Folia: the packet is built and sent by the region thread owning the chunk
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             try {
-                // through the task manager, so that a tick thread waiting for an edit can run it itself
                 FoliaTaskManager.get().submitAtChunk(nmsWorld.getWorld(), chunkX, chunkZ, () -> {
                     sendTask.run();
                     return null;
                 });
             } catch (RuntimeException e) {
-                // e.g. the plugin is being disabled; do not keep the chunk send lock
                 NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
                 throw e;
             }

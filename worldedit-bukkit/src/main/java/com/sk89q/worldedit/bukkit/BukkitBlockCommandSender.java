@@ -39,6 +39,7 @@ import org.bukkit.command.BlockCommandSender;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -64,10 +65,10 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
         return sender.getName();
     }
 
-    //FAWE start - Folia: a command block is owned by the region thread of its chunk
-    private void runSync(java.util.function.Supplier<Object> task) {
+    //FAWE start - Folia
+    private void runSync(Supplier<Object> task) {
         if (FoliaSupport.isFolia()) {
-            final org.bukkit.block.Block block = sender.getBlock();
+            final Block block = sender.getBlock();
             FoliaTaskManager.get().callAtChunk(block.getWorld(), block.getX() >> 4, block.getZ() >> 4, task);
         } else {
             TaskManager.taskManager().sync(task);
@@ -204,13 +205,12 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
 
             @Override
             public boolean isActive() {
-                //FAWE start - Folia has no Bukkit scheduler and no primary thread
+                //FAWE start - Folia
                 if (FoliaSupport.isFolia()) {
-                    final org.bukkit.block.Block block = sender.getBlock();
+                    final Block block = sender.getBlock();
                     if (Bukkit.isOwnedByCurrentRegion(block)) {
                         updateActive();
                     } else {
-                        // we should update it eventually
                         Bukkit.getRegionScheduler().execute(plugin, block.getLocation(), this::updateActive);
                     }
                     return active;

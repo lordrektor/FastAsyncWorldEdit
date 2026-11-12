@@ -136,7 +136,7 @@ public class BukkitServerInterface extends AbstractPlatform implements MultiUser
 
     @Override
     public int schedule(long delay, long period, Runnable task) {
-        //FAWE start - Folia has no Bukkit scheduler
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             Bukkit.getGlobalRegionScheduler().runAtFixedRate(
                     plugin,
@@ -277,7 +277,7 @@ public class BukkitServerInterface extends AbstractPlatform implements MultiUser
 
     @Override
     public long getTickCount() {
-        //FAWE start - Folia: tick counters are per region and start at zero
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             return System.nanoTime() / 50_000_000L;
         }

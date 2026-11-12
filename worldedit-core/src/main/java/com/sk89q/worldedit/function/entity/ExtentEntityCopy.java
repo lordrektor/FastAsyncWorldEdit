@@ -196,7 +196,6 @@ public class ExtentEntityCopy implements EntityFunction {
                         );
                     } else {
                         if (FoliaSupport.isFolia()) {
-                            // the entity removes itself on its owning thread
                             entity.remove();
                         } else {
                             TaskManager.taskManager().sync(entity::remove);

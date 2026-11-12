@@ -39,7 +39,7 @@ public class PaperweightPostProcessor implements IBatchProcessor {
             return;
         }
         PaperweightGetBlocks_Copy getBlocks = (PaperweightGetBlocks_Copy) iChunkGet;
-        //FAWE start - Folia: scheduled ticks are kept per region and may only be added by the owning region thread
+        //FAWE start - Folia
         final List<Runnable> ticks = FoliaSupport.isFolia() ? new ArrayList<>() : null;
         //FAWE end
         layer:
@@ -110,7 +110,7 @@ public class PaperweightPostProcessor implements IBatchProcessor {
                 }
             }
         }
-        //FAWE start - Folia: one task for the whole chunk
+        //FAWE start - Folia
         if (ticks != null && !ticks.isEmpty()) {
             Bukkit.getRegionScheduler().execute(
                     WorldEditPlugin.getInstance(),

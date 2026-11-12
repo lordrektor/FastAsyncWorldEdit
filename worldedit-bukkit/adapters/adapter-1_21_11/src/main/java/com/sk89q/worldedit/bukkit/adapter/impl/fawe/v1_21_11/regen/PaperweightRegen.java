@@ -262,12 +262,7 @@ public class PaperweightRegen extends Regenerator {
     }
 
     //FAWE start - Folia
-    /**
-     * The temporary world's chunks are owned by region threads until they are unloaded. The chunk system may only be
-     * closed once those regions are gone, so the cleanup waits for that on the global region thread.
-     */
     private void cleanupFolia(ServerLevel world, LevelStorageSource.LevelStorageAccess storage, Path dir) {
-        // chunks are only unloaded from worlds that may be saved; everything is written to the temporary directory
         world.noSave = false;
         final AtomicInteger attempts = new AtomicInteger();
         final AtomicInteger taskId = new AtomicInteger(-1);
@@ -299,10 +294,6 @@ public class PaperweightRegen extends Regenerator {
         }, 20));
     }
 
-    /**
-     * A world that is not registered with the server gets no global tick on Folia. Its regions are ticked like any
-     * other, but the global chunk tasks and ticket updates have to be run by hand.
-     */
     private static final class FoliaWorld {
 
         private static final Field TASK_QUEUE_REGION_DATA;

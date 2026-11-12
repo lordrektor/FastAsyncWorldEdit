@@ -27,14 +27,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import java.util.concurrent.CancellationException;
+import org.bukkit.Location;
 
-/**
- * {@link TaskManager} for Folia.
- * <p>
- * There is no main thread on Folia. "Sync" tasks without a location run on the global region thread, which must not touch
- * chunks or entities; everything that does has to use the location-aware methods ({@link #syncAt}, {@link #submitAt},
- * {@link #taskAt}, {@link #syncWith}), which run on the region thread owning the chunk or entity.
- */
 public class FoliaTaskManager extends TaskManager {
 
     private static final MethodHandle IS_GLOBAL_TICK_THREAD;
@@ -49,19 +44,11 @@ public class FoliaTaskManager extends TaskManager {
     }
 
     private static final Object NOT_OWNED = new Object();
-    /**
-     * How long a tick thread may wait for work that only another region can do, before the wait is given up. A region
-     * created next to the waiting one is only started once the waiting thread finishes its tick, which it never would.
-     */
     private static final long TICK_THREAD_STALL_NANOS = TimeUnit.SECONDS.toNanos(60);
 
     private final Plugin plugin;
     private final AtomicInteger taskIds = new AtomicInteger();
     private final ConcurrentHashMap<Integer, ScheduledTask> repeatingTasks = new ConcurrentHashMap<>();
-    /**
-     * Region tasks that were scheduled but have not run yet. A tick thread that has to wait for a future (an edit flushed
-     * from a region thread) runs the ones it owns itself, as the region scheduler cannot run them while the thread waits.
-     */
     private final Set<RegionTask<?>> pendingRegionTasks = new ConcurrentSkipListSet<>();
     private final AtomicLong regionTaskIds = new AtomicLong();
 
@@ -103,9 +90,6 @@ public class FoliaTaskManager extends TaskManager {
         Bukkit.getGlobalRegionScheduler().execute(this.plugin, runnable);
     }
 
-    /**
-     * Run a task on the global region thread, inline if this is the global region thread.
-     */
     public void runGlobal(final Runnable runnable) {
         if (isGlobalTickThread()) {
             runnable.run();
@@ -132,10 +116,6 @@ public class FoliaTaskManager extends TaskManager {
         Bukkit.getAsyncScheduler().runDelayed(this.plugin, task -> runnable.run(), delay * 50L, TimeUnit.MILLISECONDS);
     }
 
-    /**
-     * There is no main thread to move a task to, and the global region thread may not touch chunks or entities. Code
-     * that touches the world hops to the owning thread itself, so the task simply runs on the calling thread.
-     */
     @Override
     public <T> T sync(final Supplier<T> function) {
         return function.get();
@@ -198,14 +178,11 @@ public class FoliaTaskManager extends TaskManager {
         if (!FoliaSupport.isTickThread()) {
             return future.get();
         }
-        // We are blocking a tick thread. Tasks aimed at this thread's own region would never run (and whoever waits
-        // for them would never finish), so run them here whilst waiting.
         final boolean global = isGlobalTickThread();
         long lastProgress = System.nanoTime();
         while (!future.isDone()) {
             boolean ran = runPendingOwnedTasks();
             if (global) {
-                // tasks submitted through TaskManager#sync are drained by the queue handler on the global region thread
                 Fawe.instance().getQueueHandler().run();
             }
             if (ran) {
@@ -229,7 +206,6 @@ public class FoliaTaskManager extends TaskManager {
         boolean ran = false;
         for (RegionTask<?> task : this.pendingRegionTasks) {
             if (!task.isDone() && Bukkit.isOwnedByCurrentRegion(task.world, task.chunkX, task.chunkZ)) {
-                // FutureTask only ever runs once, the copy handed to the region scheduler becomes a no-op
                 task.run();
                 ran = true;
             }
@@ -237,20 +213,12 @@ public class FoliaTaskManager extends TaskManager {
         return ran;
     }
 
-    /**
-     * Cancel the region tasks that have not run, so that threads waiting for them wake up. Used when the plugin is
-     * disabled: the region threads do not run tasks any more at that point.
-     */
     public void cancelPendingRegionTasks() {
         for (RegionTask<?> task : this.pendingRegionTasks) {
             task.cancel(false);
         }
     }
 
-    /**
-     * Run a task on the region thread owning the given chunk and wait for the result. Runs inline if the current thread
-     * already owns the chunk.
-     */
     public <T> T callAtChunk(final World world, final int chunkX, final int chunkZ, final Supplier<T> supplier) {
         if (Bukkit.isOwnedByCurrentRegion(world, chunkX, chunkZ)) {
             return supplier.get();
@@ -258,9 +226,6 @@ public class FoliaTaskManager extends TaskManager {
         return join(submitAtChunk(world, chunkX, chunkZ, supplier::get));
     }
 
-    /**
-     * Submit a task to the region thread owning the given chunk. Runs inline if the current thread already owns the chunk.
-     */
     public <T> Future<T> submitAtChunk(final World world, final int chunkX, final int chunkZ, final Callable<T> callable) {
         final RegionTask<T> task = new RegionTask<>(callable, world, chunkX, chunkZ);
         if (Bukkit.isOwnedByCurrentRegion(world, chunkX, chunkZ)) {
@@ -277,19 +242,11 @@ public class FoliaTaskManager extends TaskManager {
         return task;
     }
 
-    /**
-     * Run a task on the thread owning the given entity and wait for the result. Runs inline if the current thread
-     * already owns the entity.
-     *
-     * @throws IllegalStateException if the entity was removed before the task could run
-     */
     public <T> T callWithEntity(final Entity entity, final Supplier<T> supplier) {
         if (Bukkit.isOwnedByCurrentRegion(entity)) {
             return supplier.get();
         }
-        // The region scheduler runs tasks between ticks, the entity scheduler only once per tick. Go to the region the
-        // entity was last seen in first, and only use the entity scheduler if it has left that region meanwhile.
-        final org.bukkit.Location location = entity.getLocation();
+        final Location location = entity.getLocation();
         if (location.getWorld() != null) {
             final Object result = callAtChunk(
                     location.getWorld(),
@@ -303,14 +260,13 @@ public class FoliaTaskManager extends TaskManager {
             }
         }
         final FutureTask<T> task = new FutureTask<>(supplier::get);
-        // the "retired" callback runs if the entity is removed first: cancel so the waiting side wakes up
         final boolean scheduled = entity.getScheduler().execute(this.plugin, task, () -> task.cancel(false), 1L);
         if (!scheduled) {
             throw new IllegalStateException("Entity " + entity.getUniqueId() + " was removed before the task could run");
         }
         try {
             return join(task);
-        } catch (java.util.concurrent.CancellationException e) {
+        } catch (CancellationException e) {
             throw new IllegalStateException("Entity " + entity.getUniqueId() + " was removed before the task could run", e);
         }
     }
@@ -344,16 +300,12 @@ public class FoliaTaskManager extends TaskManager {
         }
     }
 
-    /**
-     * Get the Folia task manager. Only call on Folia.
-     */
     public static FoliaTaskManager get() {
         return (FoliaTaskManager) TaskManager.taskManager();
     }
 
     private final class RegionTask<T> extends FutureTask<T> implements Comparable<RegionTask<?>> {
 
-        // tasks picked up by a waiting tick thread have to run in the order they were submitted in
         private final long id = FoliaTaskManager.this.regionTaskIds.incrementAndGet();
         private final World world;
         private final int chunkX;

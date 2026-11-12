@@ -86,7 +86,7 @@ public class BukkitEntity implements Entity {
     public boolean setLocation(Location location) {
         org.bukkit.entity.Entity entity = entityRef.get();
         if (entity != null) {
-            //FAWE start - Folia only allows asynchronous teleports
+            //FAWE start - Folia
             if (FoliaSupport.isFolia()) {
                 entity.teleportAsync(BukkitAdapter.adapt(location));
                 return true;
@@ -108,13 +108,12 @@ public class BukkitEntity implements Entity {
 
             BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
             if (adapter != null) {
-                //FAWE start - Folia: entity data may only be read on the thread owning the entity
+                //FAWE start - Folia
                 if (FoliaSupport.isFolia()) {
                     try {
                         return FoliaTaskManager.get().callWithEntity(entity, () -> {
                             BaseEntity state = adapter.getEntity(entity);
                             if (state != null) {
-                                // resolve lazily-saved NBT now, whilst on the owning thread
                                 state.getNbt();
                             }
                             return state;
@@ -135,7 +134,7 @@ public class BukkitEntity implements Entity {
 
     @Override
     public boolean remove() {
-        //FAWE start - Folia: remove on the thread owning the entity
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             org.bukkit.entity.Entity foliaEntity = entityRef.get();
             if (foliaEntity == null) {
@@ -151,7 +150,6 @@ public class BukkitEntity implements Entity {
                     return foliaEntity.isDead();
                 });
             } catch (IllegalStateException retired) {
-                // The entity was removed or unloaded before its thread got to the task. Nothing was removed by us.
                 return false;
             }
         }

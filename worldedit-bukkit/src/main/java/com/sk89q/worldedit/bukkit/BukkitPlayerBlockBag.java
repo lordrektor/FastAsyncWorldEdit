@@ -55,7 +55,7 @@ public class BukkitPlayerBlockBag extends BlockBag implements SlottableBlockBag 
      */
     private void loadInventory() {
         if (items == null) {
-            //FAWE start - Folia: inventories belong to the thread owning the player
+            //FAWE start - Folia
             if (FoliaSupport.isFolia()) {
                 items = FoliaTaskManager.get().callWithEntity(player, () -> player.getInventory().getContents());
                 return;
@@ -182,7 +182,6 @@ public class BukkitPlayerBlockBag extends BlockBag implements SlottableBlockBag 
         if (items != null) {
             final ItemStack[] contents = items;
             if (FoliaSupport.isFolia()) {
-                //FAWE - Folia: inventories belong to the thread owning the player
                 try {
                     FoliaTaskManager.get().callWithEntity(player, () -> {
                         player.getInventory().setContents(contents);

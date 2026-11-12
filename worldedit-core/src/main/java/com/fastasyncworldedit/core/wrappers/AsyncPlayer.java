@@ -17,6 +17,8 @@ import com.sk89q.worldedit.util.Location;
 import com.sk89q.worldedit.util.TargetBlock;
 import com.sk89q.worldedit.world.World;
 import com.sk89q.worldedit.world.block.BlockTypes;
+import com.fastasyncworldedit.core.util.FoliaSupport;
+import java.util.function.Supplier;
 
 public class AsyncPlayer extends PlayerProxy {
 
@@ -173,8 +175,8 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public void setPosition(Vector3 pos, float pitch, float yaw) {
-        //FAWE start - Folia: teleports are asynchronous there and may be requested from any thread
-        if (com.fastasyncworldedit.core.util.FoliaSupport.isFolia()) {
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia()) {
             super.setPosition(pos, pitch, yaw);
             return;
         }
@@ -262,11 +264,9 @@ public class AsyncPlayer extends PlayerProxy {
     }
 
     //FAWE start - Folia
-    private <T> T syncPlayer(java.util.function.Supplier<T> supplier) {
-        // Folia: an asynchronous thread may read (and load) any chunk and request teleports, whereas the thread owning
-        // the player may not load chunks outside its region. Only go to the owning thread from another tick thread.
-        if (com.fastasyncworldedit.core.util.FoliaSupport.isFolia()
-                && !com.fastasyncworldedit.core.util.FoliaSupport.isTickThread()) {
+    private <T> T syncPlayer(Supplier<T> supplier) {
+        if (FoliaSupport.isFolia()
+                && !FoliaSupport.isTickThread()) {
             return supplier.get();
         }
         return TaskManager.taskManager().syncWith(supplier, getBasePlayer());

@@ -45,6 +45,7 @@ import org.bukkit.entity.Tameable;
 import org.bukkit.entity.Villager;
 import org.bukkit.entity.WaterMob;
 import org.bukkit.entity.minecart.ExplosiveMinecart;
+import java.util.function.BooleanSupplier;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -148,8 +149,8 @@ class BukkitEntityProperties implements EntityProperties {
         return entity instanceof Golem;
     }
 
-    //FAWE start - Folia: entity state may only be read on the thread owning the entity
-    private boolean onOwningThread(java.util.function.BooleanSupplier check) {
+    //FAWE start - Folia
+    private boolean onOwningThread(BooleanSupplier check) {
         if (!FoliaSupport.isFolia()) {
             return check.getAsBoolean();
         }

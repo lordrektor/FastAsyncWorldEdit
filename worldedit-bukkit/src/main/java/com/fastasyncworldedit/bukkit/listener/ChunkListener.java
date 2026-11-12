@@ -61,7 +61,6 @@ public abstract class ChunkListener implements Listener {
 
     public ChunkListener() {
         if (Settings.settings().TICK_LIMITER.ENABLED && FoliaSupport.isFolia()) {
-            // The limiter counts events in plain fields/maps and assumes every event comes from one thread
             LOGGER.info("[FAWE Tick Limiter] Not supported on Folia, it stays disabled.");
         } else if (Settings.settings().TICK_LIMITER.ENABLED) {
             PluginManager plm = Bukkit.getPluginManager();

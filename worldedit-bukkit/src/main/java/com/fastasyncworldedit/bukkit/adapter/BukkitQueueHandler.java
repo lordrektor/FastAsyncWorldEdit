@@ -32,7 +32,6 @@ public class BukkitQueueHandler extends QueueHandler {
     @Override
     public void startUnsafe(boolean parallel) {
         ChunkListener.physicsFreeze = true;
-        // Folia: there is no async catcher or timings to toggle, thread ownership is checked per region instead
         if (parallel && !FoliaSupport.isFolia()) {
             try {
                 asyncCatcher.setBoolean(asyncCatcher, false);

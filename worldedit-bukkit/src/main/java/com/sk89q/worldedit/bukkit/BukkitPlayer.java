@@ -74,6 +74,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class BukkitPlayer extends AbstractPlayerActor {
 
@@ -165,7 +169,6 @@ public class BukkitPlayer extends AbstractPlayerActor {
     public void giveItem(BaseItemStack itemStack) {
         final PlayerInventory inv = player.getInventory();
         ItemStack newItem = BukkitAdapter.adapt(itemStack);
-        // on Folia this runs on the thread owning the player
         TaskManager.taskManager().syncWith(() -> {
             if (itemStack.getType().id().equalsIgnoreCase(WorldEdit.getInstance().getConfiguration().wandItem)) {
                 inv.remove(newItem);
@@ -246,19 +249,17 @@ public class BukkitPlayer extends AbstractPlayerActor {
         org.bukkit.World finalWorld = world;
         //FAWE end
         if (FoliaSupport.isFolia()) {
-            // Folia only allows asynchronous teleports
-            java.util.concurrent.CompletableFuture<Boolean> teleport =
+            CompletableFuture<Boolean> teleport =
                     player.teleportAsync(new Location(finalWorld, pos.x(), pos.y(), pos.z(), yaw, pitch));
             if (FoliaSupport.isTickThread()) {
-                // a tick thread must not wait for it; the result is not known yet, assume it works
                 return true;
             }
             try {
-                return teleport.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                return teleport.get(10, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return false;
-            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            } catch (ExecutionException | TimeoutException e) {
                 return false;
             }
         }
@@ -289,7 +290,7 @@ public class BukkitPlayer extends AbstractPlayerActor {
 
     @Override
     public void setGameMode(GameMode gameMode) {
-        //FAWE start - Folia: the change fires an event, which has to come from the thread owning the player
+        //FAWE start - Folia
         if (FoliaSupport.isFolia() && !Bukkit.isOwnedByCurrentRegion(player)) {
             TaskManager.taskManager().syncWith(() -> {
                 player.setGameMode(org.bukkit.GameMode.valueOf(gameMode.id().toUpperCase(Locale.ROOT)));
@@ -392,7 +393,7 @@ public class BukkitPlayer extends AbstractPlayerActor {
 
     @Override
     public boolean setLocation(com.sk89q.worldedit.util.Location location) {
-        //FAWE start - Folia only allows asynchronous teleports
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             player.teleportAsync(BukkitAdapter.adapt(location));
             return true;

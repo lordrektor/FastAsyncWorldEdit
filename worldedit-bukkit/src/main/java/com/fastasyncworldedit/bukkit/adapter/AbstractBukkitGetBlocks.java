@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.locks.ReentrantLock;
+import org.bukkit.World;
 
 public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends CharGetBlocks {
 
@@ -57,10 +58,7 @@ public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends C
 
     protected abstract void send();
 
-    /**
-     * Get the Bukkit world of this chunk. Only needed (and only implemented) by adapters that support Folia.
-     */
-    protected org.bukkit.World getBukkitWorld() {
+    protected World getBukkitWorld() {
         return null;
     }
 
@@ -179,13 +177,12 @@ public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends C
                     throw e;
                 }
             };
-            //FAWE start - Folia: block entities and entities of a chunk may only be touched by the region thread owning it
+            //FAWE start - Folia
             if (FoliaSupport.isFolia()) {
-                final org.bukkit.World world = getBukkitWorld();
+                final World world = getBukkitWorld();
                 if (world == null) {
                     throw new UnsupportedOperationException("This Minecraft version is not supported by FAWE on Folia");
                 }
-                //noinspection unchecked - required at compile time
                 return (T) (Future) FoliaTaskManager.get().submitAtChunk(world, chunkX, chunkZ, chain);
             }
             //FAWE end

@@ -221,7 +221,6 @@ public interface Actor extends Identifiable, SessionOwner, Subject, MapMetadatab
 
     default boolean checkAction() {
         long time = getMeta("faweActionTick", Long.MIN_VALUE);
-        // on Folia the timer is ticked by the global region, not by the region of the player
         long tick = FoliaSupport.isFolia() ? System.nanoTime() / 50_000_000L : Fawe.instance().getTimer().getTick();
         setMeta("faweActionTick", tick);
         return tick > time;

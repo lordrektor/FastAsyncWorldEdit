@@ -257,7 +257,7 @@ public class SingleThreadQueueExtent extends ExtentBatchProcessorHolder implemen
 
         chunk.invalidateWrapper();
 
-        //FAWE start - Folia: a tick thread may only apply a chunk inline if it owns that chunk
+        //FAWE start - Folia
         boolean inline = Fawe.isMainThread();
         if (inline && FoliaSupport.isFolia()) {
             inline = world != null && TaskManager.taskManager().isOwnedByCurrentThread(world, chunk.getX(), chunk.getZ());
@@ -463,7 +463,6 @@ public class SingleThreadQueueExtent extends ExtentBatchProcessorHolder implemen
         Future first = submissions.poll();
         try {
             while (first != null) {
-                //FAWE - Folia: a waiting tick thread keeps running the tasks aimed at its own region
                 first = (Future) TaskManager.taskManager().await(first);
             }
         } catch (FaweException e) {

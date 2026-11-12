@@ -135,6 +135,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import net.minecraft.world.level.Level;
 
 import static com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11.PaperweightPlatformAdapter.createOutput;
 import static net.minecraft.core.registries.Registries.BIOME;
@@ -583,11 +584,6 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
         return serverLevel.capturedBlockStates;
     }
 
-    /**
-     * On Folia the block-capture state is not kept on the level but in the data of the region currently ticking
-     * ("current world data"). This adapter is compiled against Paper, so that state is reached reflectively. It can only be
-     * used from the region thread that owns the position being generated at.
-     */
     private static final class FoliaCapture {
 
         private static final Method GET_CURRENT_WORLD_DATA;
@@ -597,7 +593,7 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
 
         static {
             try {
-                GET_CURRENT_WORLD_DATA = net.minecraft.world.level.Level.class.getMethod("getCurrentWorldData");
+                GET_CURRENT_WORLD_DATA = Level.class.getMethod("getCurrentWorldData");
                 Class<?> worldData = GET_CURRENT_WORLD_DATA.getReturnType();
                 CAPTURE_BLOCK_STATES = worldData.getField("captureBlockStates");
                 CAPTURE_TREE_GENERATION = worldData.getField("captureTreeGeneration");
@@ -651,7 +647,6 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                 .getValue(Identifier.tryParse(feature.id()));
 
         FaweBlockStateListPopulator populator = new FaweBlockStateListPopulator(serverLevel);
-        // Folia: runs on the region thread owning the origin (syncAt is the main thread elsewhere)
         List<CraftBlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {
@@ -689,7 +684,6 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
         TransformerGeneratorAccess access = new TransformerGeneratorAccess();
         FaweBlockStateListPopulator populator = new FaweBlockStateListPopulator(serverLevel);
         access.setDelegate(populator);
-        // Folia: runs on the region thread owning the origin (syncAt is the main thread elsewhere)
         List<CraftBlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {
@@ -760,7 +754,6 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                 .getValue(Identifier.tryParse(treeType.id()));
 
         FaweBlockStateListPopulator populator = new FaweBlockStateListPopulator(serverLevel);
-        // Folia: runs on the region thread owning the origin (syncAt is the main thread elsewhere)
         List<CraftBlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {

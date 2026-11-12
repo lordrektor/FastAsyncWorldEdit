@@ -480,7 +480,7 @@ public class WorldEditPlugin extends JavaPlugin {
         if (config != null) {
             config.unload();
         }
-        //FAWE start - Folia has no Bukkit scheduler
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             if (TaskManager.taskManager() instanceof FoliaTaskManager foliaTaskManager) {
                 foliaTaskManager.cancelPendingRegionTasks();

@@ -25,7 +25,6 @@ public class LazyBaseEntity extends BaseEntity {
         Supplier<LinCompoundTag> tmp = saveTag;
         if (tmp != null) {
             saveTag = null;
-            // On Folia the supplier itself hops to the thread owning the entity
             if (Fawe.isMainThread() || FoliaSupport.isFolia()) {
                 setNbt(tmp.get());
             } else {

@@ -208,13 +208,6 @@ public class Fawe {
         }
     }
 
-    /**
-     * Get if the current thread is the main server thread.
-     * <p>
-     * On Folia there is no main thread: this returns true for any tick thread (region thread or global region thread).
-     * It therefore only tells you "this thread must not be blocked", it does not mean the thread may touch any given
-     * chunk or entity. Use {@link TaskManager#isOwnedByCurrentThread(com.sk89q.worldedit.world.World, int, int)} for that.
-     */
     public static boolean isMainThread() {
         if (FoliaSupport.isFolia()) {
             return instance == null || FoliaSupport.isTickThread();

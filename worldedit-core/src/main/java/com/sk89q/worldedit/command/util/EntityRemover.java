@@ -150,7 +150,6 @@ public class EntityRemover {
                 if (type.matches(registryType)) {
                     //FAWE start - Calling this async violates thread safety
                     if (FoliaSupport.isFolia()) {
-                        // the entity removes itself on its owning thread
                         entity.remove();
                     } else {
                         TaskManager.taskManager().sync(entity::remove);

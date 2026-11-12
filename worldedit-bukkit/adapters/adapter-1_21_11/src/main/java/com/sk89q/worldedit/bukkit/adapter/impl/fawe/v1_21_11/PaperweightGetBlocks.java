@@ -89,6 +89,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
+import com.sk89q.worldedit.entity.BaseEntity;
 
 import static com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11.PaperweightPlatformAdapter.createInput;
 import static com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11.PaperweightPlatformAdapter.createOutput;
@@ -199,7 +200,7 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
 
     @Override
     public FaweCompoundTag tile(final int x, final int y, final int z) {
-        //FAWE start - Folia: block entities may only be read and saved by the thread owning the chunk
+        //FAWE start - Folia
         if (FoliaSupport.isFolia() && !Bukkit.isOwnedByCurrentRegion(serverLevel.getWorld(), chunkX, chunkZ)) {
             final LevelChunk levelChunk = getChunk();
             return FoliaTaskManager.get().callAtChunk(serverLevel.getWorld(), chunkX, chunkZ, () -> {
@@ -220,7 +221,7 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
 
     @Override
     public Map<BlockVector3, FaweCompoundTag> tiles() {
-        //FAWE start - Folia: take a saved copy on the thread owning the chunk
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
             final LevelChunk levelChunk = getChunk();
             return FoliaTaskManager.get().callAtChunk(serverLevel.getWorld(), chunkX, chunkZ, () -> {
@@ -318,8 +319,8 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
         }
         if (entity != null) {
             org.bukkit.entity.Entity bukkitEnt = entity.getBukkitEntity();
-            //FAWE start - Folia: the state is null if the entity was removed before its thread could save it
-            com.sk89q.worldedit.entity.BaseEntity state = BukkitAdapter.adapt(bukkitEnt).getState();
+            //FAWE start - Folia
+            BaseEntity state = BukkitAdapter.adapt(bukkitEnt).getState();
             if (state == null || state.getNbt() == null) {
                 return null;
             }
@@ -336,9 +337,8 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
 
     @Override
     public Collection<FaweCompoundTag> entities() {
-        //FAWE start - Folia: entities are saved on the region thread owning them, not lazily on a worker thread
+        //FAWE start - Folia
         if (FoliaSupport.isFolia()) {
-            // loading the chunk takes a lock, which must not happen on the region thread
             final LevelChunk levelChunk = getChunk();
             return FoliaTaskManager.get().callAtChunk(serverLevel.getWorld(), chunkX, chunkZ, () -> {
                 List<FaweCompoundTag> tags = new ArrayList<>();
@@ -386,9 +386,6 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
     }
 
     //FAWE start - Folia
-    /**
-     * Get a copy of the entities of this chunk. On Folia the entity list is read on the region thread owning the chunk.
-     */
     private List<Entity> getEntitiesOnOwningThread() {
         if (!FoliaSupport.isFolia()) {
             return PaperweightPlatformAdapter.getEntities(getChunk());
@@ -426,7 +423,7 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
             }
             copies.put(copyKey, copy);
         }
-        //FAWE start - Folia: block entities belong to the region thread owning the chunk
+        //FAWE start - Folia
         final List<BlockEntity> beacons = !FoliaSupport.isFolia() ? removeExistingTiles(set, nmsChunk, copy)
                 : nmsChunk.getBlockEntities().isEmpty() ? null
                 : FoliaTaskManager.get().callAtChunk(
@@ -684,9 +681,8 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
                     if (Settings.settings().EXPERIMENTAL.REMOVE_ENTITY_FROM_WORLD_ON_CHUNK_FAIL) {
                         for (UUID uuid : entityRemoves) {
                             Entity entity = nmsWorld.getEntities().get(uuid);
-                            //FAWE - Folia: the entity may have moved to a chunk owned by another region thread
                             if (entity != null && FoliaSupport.isFolia()
-                                    && !org.bukkit.Bukkit.isOwnedByCurrentRegion(entity.getBukkitEntity())) {
+                                    && !Bukkit.isOwnedByCurrentRegion(entity.getBukkitEntity())) {
                                 continue;
                             }
                             if (entity != null) {
@@ -1014,7 +1010,6 @@ public class PaperweightGetBlocks extends AbstractBukkitGetBlocks<ServerLevel, L
                 levelChunk = this.levelChunk;
                 if (levelChunk == null) {
                     try {
-                        //FAWE - Folia: a waiting tick thread keeps serving its own region tasks
                         this.levelChunk = levelChunk = TaskManager.taskManager().await(ensureLoaded(this.serverLevel));
                     } catch (InterruptedException | ExecutionException e) {
                         LOGGER.error("Could not get chunk at {},{}", chunkX, chunkZ, e);
