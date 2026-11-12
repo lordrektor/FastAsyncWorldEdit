@@ -22,14 +22,14 @@ package com.sk89q.worldedit.internal.event;
 import com.sk89q.worldedit.extension.platform.Platform;
 import com.sk89q.worldedit.util.Identifiable;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class InteractionDebouncer {
     private final Platform platform;
-    private final Map<UUID, Interaction> lastInteractions = new HashMap<>();
+    private final Map<UUID, Interaction> lastInteractions = new ConcurrentHashMap<>();
 
     public InteractionDebouncer(Platform platform) {
         this.platform = platform;

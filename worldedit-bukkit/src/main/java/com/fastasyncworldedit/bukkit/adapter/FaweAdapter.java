@@ -53,7 +53,8 @@ public abstract class FaweAdapter<TAG, SERVER_LEVEL> extends CachedBukkitAdapter
         }
         BlockVector3 target = blockVector3;
         SERVER_LEVEL serverLevel = getServerLevel(world);
-        List<BlockState> placed = TaskManager.taskManager().sync(() -> {
+        // Folia: runs on the region thread owning the base of the tree (syncAt is the main thread elsewhere)
+        List<BlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {
                 if (!world.generateTree(BukkitAdapter.adapt(world, target), bukkitType)) {
@@ -63,7 +64,7 @@ public abstract class FaweAdapter<TAG, SERVER_LEVEL> extends CachedBukkitAdapter
             } finally {
                 postCaptureBlockStates(serverLevel);
             }
-        });
+        }, BukkitAdapter.adapt(world), target.x() >> 4, target.z() >> 4);
 
         if (placed == null || placed.isEmpty()) {
             return false;

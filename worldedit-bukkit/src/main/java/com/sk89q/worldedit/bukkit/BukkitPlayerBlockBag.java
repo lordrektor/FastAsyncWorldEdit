@@ -19,6 +19,8 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.extent.inventory.SlottableBlockBag;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.blocks.BaseItem;
@@ -53,6 +55,12 @@ public class BukkitPlayerBlockBag extends BlockBag implements SlottableBlockBag 
      */
     private void loadInventory() {
         if (items == null) {
+            //FAWE start - Folia: inventories belong to the thread owning the player
+            if (FoliaSupport.isFolia()) {
+                items = FoliaTaskManager.get().callWithEntity(player, () -> player.getInventory().getContents());
+                return;
+            }
+            //FAWE end
             items = player.getInventory().getContents();
         }
     }
@@ -172,10 +180,25 @@ public class BukkitPlayerBlockBag extends BlockBag implements SlottableBlockBag 
     @Override
     public void flushChanges() {
         if (items != null) {
-            TaskManager.taskManager().sync(() -> {
-                player.getInventory().setContents(items);
-                return null;
-            });
+            final ItemStack[] contents = items;
+            if (FoliaSupport.isFolia()) {
+                //FAWE - Folia: inventories belong to the thread owning the player
+                try {
+                    FoliaTaskManager.get().callWithEntity(player, () -> {
+                        player.getInventory().setContents(contents);
+                        return null;
+                    });
+                } catch (IllegalStateException e) {
+                    if (player.isOnline()) {
+                        throw e;
+                    }
+                }
+            } else {
+                TaskManager.taskManager().sync(() -> {
+                    player.getInventory().setContents(contents);
+                    return null;
+                });
+            }
             items = null;
         }
     }

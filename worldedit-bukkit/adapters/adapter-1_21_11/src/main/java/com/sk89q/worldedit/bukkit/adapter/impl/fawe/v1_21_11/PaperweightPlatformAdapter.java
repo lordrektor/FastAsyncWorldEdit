@@ -1,10 +1,13 @@
 package com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11;
 
+import org.bukkit.Bukkit;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.ChunkEntitySlices;
 import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkHolderManager;
 import com.fastasyncworldedit.bukkit.adapter.CachedBukkitAdapter;
 import com.fastasyncworldedit.bukkit.adapter.DelegateSemaphore;
 import com.fastasyncworldedit.bukkit.adapter.NMSAdapter;
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.FaweCache;
 import com.fastasyncworldedit.core.math.BitArrayUnstretched;
@@ -260,6 +263,19 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         if (levelChunk != null) {
             return CompletableFuture.completedFuture(levelChunk);
         }
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia()) {
+            // The future is completed by the region thread owning the chunk. There is no main thread to fall back to.
+            return serverLevel
+                    .getWorld()
+                    .getChunkAtAsync(chunkX, chunkZ, true, true)
+                    .thenApply(chunk -> {
+                        addTicket(serverLevel, chunkX, chunkZ);
+                        LevelChunk loaded = serverLevel.getChunkSource().getChunkAtIfLoadedImmediately(chunkX, chunkZ);
+                        return loaded != null ? loaded : toLevelChunk(chunk);
+                    });
+        }
+        //FAWE end
         if (PaperLib.isPaper()) {
             CompletableFuture<LevelChunk> future = serverLevel
                     .getWorld()
@@ -296,6 +312,20 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
     }
 
     public static @Nullable LevelChunk getChunkImmediatelyAsync(ServerLevel serverLevel, int chunkX, int chunkZ) {
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia()) {
+            LevelChunk loaded = serverLevel.getChunkSource().getChunkAtIfLoadedImmediately(chunkX, chunkZ);
+            if (loaded != null) {
+                addTicket(serverLevel, chunkX, chunkZ);
+                return loaded;
+            }
+            // A tick thread may only load chunks of its own region synchronously
+            if (Bukkit.isOwnedByCurrentRegion(serverLevel.getWorld(), chunkX, chunkZ)) {
+                return serverLevel.getChunk(chunkX, chunkZ);
+            }
+            return null;
+        }
+        //FAWE end
         if (!PaperLib.isPaper()) {
             LevelChunk nmsChunk = serverLevel.getChunkSource().getChunk(chunkX, chunkZ, false);
             if (nmsChunk != null) {
@@ -325,6 +355,14 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
     }
 
     private static void addTicket(ServerLevel serverLevel, int chunkX, int chunkZ) {
+        //FAWE start - Folia: there is no main thread executor; adding a ticket is thread-safe in the chunk system
+        if (FoliaSupport.isFolia()) {
+            serverLevel
+                    .getChunkSource()
+                    .addTicketWithRadius(ChunkHolderManager.UNLOAD_COOLDOWN, new ChunkPos(chunkX, chunkZ), 0);
+            return;
+        }
+        //FAWE end
         // Ensure chunk is definitely loaded before applying a ticket
         io.papermc.paper.util.MCUtil.MAIN_EXECUTOR.execute(() -> serverLevel
                 .getChunkSource()
@@ -361,7 +399,7 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         if (lockHolder.chunkLock == null) {
             return;
         }
-        MinecraftServer.getServer().execute(() -> {
+        final Runnable sendTask = () -> {
             try {
                 ChunkPos pos = levelChunk.getPos();
                 ClientboundLevelChunkWithLightPacket packet;
@@ -386,7 +424,24 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
             } finally {
                 NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
             }
-        });
+        };
+        //FAWE start - Folia: the packet is built and sent by the region thread owning the chunk
+        if (FoliaSupport.isFolia()) {
+            try {
+                // through the task manager, so that a tick thread waiting for an edit can run it itself
+                FoliaTaskManager.get().submitAtChunk(nmsWorld.getWorld(), chunkX, chunkZ, () -> {
+                    sendTask.run();
+                    return null;
+                });
+            } catch (RuntimeException e) {
+                // e.g. the plugin is being disabled; do not keep the chunk send lock
+                NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
+                throw e;
+            }
+            return;
+        }
+        //FAWE end
+        MinecraftServer.getServer().execute(sendTask);
     }
 
     private static List<ServerPlayer> nearbyPlayers(ServerLevel serverLevel, ChunkPos coordIntPair) {

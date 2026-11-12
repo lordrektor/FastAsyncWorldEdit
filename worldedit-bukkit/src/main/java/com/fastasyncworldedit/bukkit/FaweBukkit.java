@@ -1,5 +1,7 @@
 package com.fastasyncworldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.bukkit.adapter.BukkitQueueHandler;
 import com.fastasyncworldedit.bukkit.adapter.NMSAdapter;
 import com.fastasyncworldedit.bukkit.listener.BrushListener;
@@ -172,7 +174,7 @@ public class FaweBukkit implements IFawe, Listener {
      */
     @Override
     public TaskManager getTaskManager() {
-        return new BukkitTaskManager(plugin);
+        return FoliaSupport.isFolia() ? new FoliaTaskManager(plugin) : new BukkitTaskManager(plugin);
     }
 
     public Plugin getPlugin() {

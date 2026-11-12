@@ -1,5 +1,6 @@
 package com.fastasyncworldedit.bukkit.listener;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.bukkit.FaweBukkit;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.configuration.Settings;
@@ -59,7 +60,10 @@ public abstract class ChunkListener implements Listener {
             Settings.settings().TICK_LIMITER.FALLING, Settings.settings().TICK_LIMITER.ITEMS};
 
     public ChunkListener() {
-        if (Settings.settings().TICK_LIMITER.ENABLED) {
+        if (Settings.settings().TICK_LIMITER.ENABLED && FoliaSupport.isFolia()) {
+            // The limiter counts events in plain fields/maps and assumes every event comes from one thread
+            LOGGER.info("[FAWE Tick Limiter] Not supported on Folia, it stays disabled.");
+        } else if (Settings.settings().TICK_LIMITER.ENABLED) {
             PluginManager plm = Bukkit.getPluginManager();
             Plugin plugin = Fawe.<FaweBukkit>platform().getPlugin();
             plm.registerEvents(this, plugin);

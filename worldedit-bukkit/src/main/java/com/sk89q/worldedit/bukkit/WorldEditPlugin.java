@@ -19,8 +19,11 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.bukkit.BukkitPermissionAttachmentManager;
 import com.fastasyncworldedit.bukkit.FaweBukkit;
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.TaskManager;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.util.UpdateNotification;
 import com.fastasyncworldedit.core.util.WEManager;
@@ -434,6 +437,17 @@ public class WorldEditPlugin extends JavaPlugin {
         try {
             BukkitImplAdapter bukkitAdapter = adapterLoader.loadAdapter();
             LOGGER.info("Using " + bukkitAdapter.getClass().getCanonicalName() + " as the Bukkit adapter");
+            //FAWE start - Folia
+            if (FoliaSupport.isFolia()) {
+                if (bukkitAdapter.getClass().getName().contains(".v1_21_11.")) {
+                    LOGGER.info("Folia detected. Region-threaded support is experimental: the tick limiter "
+                            + "is disabled, chunk and entity changes are applied by the region threads owning them.");
+                } else {
+                    LOGGER.error("Folia detected, but only the Minecraft 1.21.11 adapter has been ported to Folia. "
+                            + "Edits will fail on this version.");
+                }
+            }
+            //FAWE end
             this.adapter.newValue(bukkitAdapter);
         } catch (AdapterLoadException e) {
             Platform platform = worldEdit.getPlatformManager().queryCapability(Capability.WORLD_EDITING);
@@ -466,7 +480,17 @@ public class WorldEditPlugin extends JavaPlugin {
         if (config != null) {
             config.unload();
         }
-        this.getServer().getScheduler().cancelTasks(this);
+        //FAWE start - Folia has no Bukkit scheduler
+        if (FoliaSupport.isFolia()) {
+            if (TaskManager.taskManager() instanceof FoliaTaskManager foliaTaskManager) {
+                foliaTaskManager.cancelPendingRegionTasks();
+            }
+            this.getServer().getGlobalRegionScheduler().cancelTasks(this);
+            this.getServer().getAsyncScheduler().cancelTasks(this);
+        } else {
+            this.getServer().getScheduler().cancelTasks(this);
+        }
+        //FAWE end
     }
 
     /**

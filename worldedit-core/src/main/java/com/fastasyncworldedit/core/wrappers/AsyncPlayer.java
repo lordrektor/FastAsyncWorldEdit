@@ -38,7 +38,7 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public void findFreePosition(Location searchPos) {
-        TaskManager.taskManager().sync(new RunnableVal<Boolean>() {
+        syncPlayer(new RunnableVal<Boolean>() {
             @Override
             public void run(Boolean value) {
                 getBasePlayer().findFreePosition(searchPos);
@@ -48,7 +48,7 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public void setOnGround(Location searchPos) {
-        TaskManager.taskManager().sync(new RunnableVal<Boolean>() {
+        syncPlayer(new RunnableVal<Boolean>() {
             @Override
             public void run(Boolean value) {
                 getBasePlayer().setOnGround(searchPos);
@@ -58,7 +58,7 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public void findFreePosition() {
-        TaskManager.taskManager().sync(new RunnableVal<Boolean>() {
+        syncPlayer(new RunnableVal<Boolean>() {
             @Override
             public void run(Boolean value) {
                 getBasePlayer().findFreePosition();
@@ -68,12 +68,12 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public boolean ascendLevel() {
-        return TaskManager.taskManager().sync(() -> getBasePlayer().ascendLevel());
+        return syncPlayer(() -> getBasePlayer().ascendLevel());
     }
 
     @Override
     public boolean descendLevel() {
-        return TaskManager.taskManager().sync(() -> getBasePlayer().descendLevel());
+        return syncPlayer(() -> getBasePlayer().descendLevel());
     }
 
     @Override
@@ -173,12 +173,18 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public void setPosition(Vector3 pos, float pitch, float yaw) {
+        //FAWE start - Folia: teleports are asynchronous there and may be requested from any thread
+        if (com.fastasyncworldedit.core.util.FoliaSupport.isFolia()) {
+            super.setPosition(pos, pitch, yaw);
+            return;
+        }
+        //FAWE end
         Fawe.instance().getQueueHandler().sync(() -> super.setPosition(pos, pitch, yaw));
     }
 
     @Override
     public Location getBlockTrace(int range, boolean useLastBlock) {
-        return TaskManager.taskManager().sync(() -> {
+        return syncPlayer(() -> {
             TargetBlock tb = new TargetBlock(AsyncPlayer.this, range, 0.2D);
             return useLastBlock ? tb.getAnyTargetBlock() : tb.getTargetBlock();
         });
@@ -186,7 +192,7 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public Location getBlockTraceFace(int range, boolean useLastBlock) {
-        return TaskManager.taskManager().sync(() -> {
+        return syncPlayer(() -> {
             TargetBlock tb = new TargetBlock(AsyncPlayer.this, range, 0.2D);
             return useLastBlock ? tb.getAnyTargetBlockFace() : tb.getTargetBlockFace();
         });
@@ -194,7 +200,7 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public Location getSolidBlockTrace(int range) {
-        return TaskManager.taskManager().sync(() -> {
+        return syncPlayer(() -> {
             TargetBlock tb = new TargetBlock(AsyncPlayer.this, range, 0.2D);
             return tb.getSolidTargetBlock();
         });
@@ -207,7 +213,7 @@ public class AsyncPlayer extends PlayerProxy {
 
     @Override
     public boolean passThroughForwardWall(int range) {
-        return TaskManager.taskManager().sync(() -> {
+        return syncPlayer(() -> {
             int searchDist = 0;
             TargetBlock hitBlox = new TargetBlock(AsyncPlayer.this, range, 0.2);
             Extent world = getLocation().getExtent();
@@ -254,5 +260,17 @@ public class AsyncPlayer extends PlayerProxy {
             return false;
         });
     }
+
+    //FAWE start - Folia
+    private <T> T syncPlayer(java.util.function.Supplier<T> supplier) {
+        // Folia: an asynchronous thread may read (and load) any chunk and request teleports, whereas the thread owning
+        // the player may not load chunks outside its region. Only go to the owning thread from another tick thread.
+        if (com.fastasyncworldedit.core.util.FoliaSupport.isFolia()
+                && !com.fastasyncworldedit.core.util.FoliaSupport.isTickThread()) {
+            return supplier.get();
+        }
+        return TaskManager.taskManager().syncWith(supplier, getBasePlayer());
+    }
+    //FAWE end
 
 }

@@ -207,6 +207,12 @@ public class NMSAdapter implements FAWEPlatformAdapterImpl {
                 throw new IllegalStateException("SENDING_CHUNKS stored lock does not equal lock attempted to be unlocked?!");
             }
             lock.lock.unlockRead(lockHolder.stamp);
+            // A section write that is waiting for this read lock holds on to this lock object and expects to find it in the
+            // map when it is done. Dropping it here lets a third access create a new lock, and the writer then fails with
+            // "stored lock does not equal lock attempted to be unlocked" (seen with concurrent edits of the same chunk).
+            if (lock.writeWaiting) {
+                return lock;
+            }
             // Do not continue to store the lock if we may not need it (i.e. chunk has been sent, may not be sent again)
             return null;
         });

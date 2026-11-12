@@ -1,5 +1,6 @@
 package com.fastasyncworldedit.bukkit.adapter;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.extent.processor.lighting.NMSRelighter;
 import com.fastasyncworldedit.core.extent.processor.lighting.Relighter;
 import com.fastasyncworldedit.core.queue.IQueueExtent;
@@ -77,8 +78,13 @@ public abstract class StarlightRelighter<SERVER_LEVEL, CHUNK_POS> implements Rel
             if (i != coords.size()) {
                 LOGGER.warn("Processed {} chunks instead of {}", i, coords.size());
             }
-            // post process chunks on main thread
-            TaskManager.taskManager().task(() -> postProcessChunks(coords));
+            if (FoliaSupport.isFolia()) {
+                // tickets are thread-safe and chunk sending hops to the owning region itself
+                postProcessChunks(coords);
+            } else {
+                // post process chunks on main thread
+                TaskManager.taskManager().task(() -> postProcessChunks(coords));
+            }
             // call callback on our own threads
             TaskManager.taskManager().async(andThen);
         };
@@ -99,7 +105,11 @@ public abstract class StarlightRelighter<SERVER_LEVEL, CHUNK_POS> implements Rel
      */
     protected void fixLighting(LongSet chunks, Runnable andThen) {
         Set<CHUNK_POS> coords = convertChunkKeysToChunkPos(chunks);
-        TaskManager.taskManager().task(() -> {
+        // Folia: asynchronous chunk loads, tickets and relight requests may be issued from any thread
+        final java.util.function.Consumer<Runnable> executor = FoliaSupport.isFolia()
+                ? Runnable::run
+                : TaskManager.taskManager()::task;
+        executor.accept(() -> {
             // trigger chunk load and apply ticket on main thread
             List<CompletableFuture<?>> futures = chunkLoadFutures(coords);
             // collect futures and trigger relight once all chunks are loaded

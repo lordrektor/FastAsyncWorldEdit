@@ -5,6 +5,8 @@ import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.queue.IChunkCache;
 import com.fastasyncworldedit.core.queue.IChunkGet;
 import com.fastasyncworldedit.core.queue.implementation.chunk.ChunkCache;
+import com.fastasyncworldedit.core.util.FoliaSupport;
+import com.fastasyncworldedit.core.util.TaskManager;
 import com.google.common.collect.ImmutableList;
 import com.mojang.serialization.Lifecycle;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
@@ -36,10 +38,13 @@ import org.bukkit.generator.BiomeProvider;
 
 import javax.annotation.Nonnull;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import static net.minecraft.core.registries.Registries.BIOME;
@@ -91,6 +96,12 @@ public class PaperweightRegen extends Regenerator {
 
     @Override
     protected void runTasks(final BooleanSupplier shouldKeepTicking) {
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia()) {
+            FoliaWorld.pump(this.freshWorld);
+            return;
+        }
+        //FAWE end
         while (shouldKeepTicking.getAsBoolean()) {
             if (!this.freshWorld.getChunkSource().pollTask()) {
                 return;
@@ -208,6 +219,12 @@ public class PaperweightRegen extends Regenerator {
 
     @Override
     protected void cleanup() {
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia() && freshWorld != null) {
+            cleanupFolia(freshWorld, session, tempDir);
+            return;
+        }
+        //FAWE end
         try {
             session.close();
         } catch (Exception ignored) {
@@ -243,6 +260,88 @@ public class PaperweightRegen extends Regenerator {
     protected IChunkCache<IChunkGet> initSourceQueueCache() {
         return new ChunkCache<>(BukkitAdapter.adapt(freshWorld.getWorld()));
     }
+
+    //FAWE start - Folia
+    /**
+     * The temporary world's chunks are owned by region threads until they are unloaded. The chunk system may only be
+     * closed once those regions are gone, so the cleanup waits for that on the global region thread.
+     */
+    private void cleanupFolia(ServerLevel world, LevelStorageSource.LevelStorageAccess storage, Path dir) {
+        // chunks are only unloaded from worlds that may be saved; everything is written to the temporary directory
+        world.noSave = false;
+        final AtomicInteger attempts = new AtomicInteger();
+        final AtomicInteger taskId = new AtomicInteger(-1);
+        taskId.set(TaskManager.taskManager().repeat(() -> {
+            FoliaWorld.pump(world);
+            if (FoliaWorld.hasRegions(world) && attempts.incrementAndGet() < 120) {
+                return;
+            }
+            TaskManager.taskManager().cancel(taskId.get());
+            try {
+                world.getChunkSource().getDataStorage().cache.clear();
+                world.getChunkSource().close(false);
+            } catch (Exception ignored) {
+            }
+            try {
+                storage.close();
+            } catch (Exception ignored) {
+            }
+            try {
+                removeWorldFromWorldsMap();
+            } catch (Exception ignored) {
+            }
+            TaskManager.taskManager().async(() -> {
+                try {
+                    SafeFiles.tryHardToDeleteDir(dir);
+                } catch (Exception ignored) {
+                }
+            });
+        }, 20));
+    }
+
+    /**
+     * A world that is not registered with the server gets no global tick on Folia. Its regions are ticked like any
+     * other, but the global chunk tasks and ticket updates have to be run by hand.
+     */
+    private static final class FoliaWorld {
+
+        private static final Field TASK_QUEUE_REGION_DATA;
+        private static final Method DRAIN_GLOBAL_CHUNK_TASKS;
+        private static final Field REGIONISER;
+        private static final Method COMPUTE_FOR_ALL_REGIONS;
+
+        static {
+            try {
+                TASK_QUEUE_REGION_DATA = ServerLevel.class.getField("taskQueueRegionData");
+                DRAIN_GLOBAL_CHUNK_TASKS = TASK_QUEUE_REGION_DATA.getType().getMethod("drainGlobalChunkTasks");
+                REGIONISER = ServerLevel.class.getField("regioniser");
+                COMPUTE_FOR_ALL_REGIONS = REGIONISER.getType().getMethod("computeForAllRegionsUnsynchronised", Consumer.class);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("Unsupported Folia version: cannot find the region task queue", e);
+            }
+        }
+
+        private static void pump(ServerLevel world) {
+            try {
+                DRAIN_GLOBAL_CHUNK_TASKS.invoke(TASK_QUEUE_REGION_DATA.get(world));
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            world.moonrise$getChunkTaskScheduler().chunkHolderManager.processTicketUpdates();
+        }
+
+        private static boolean hasRegions(ServerLevel world) {
+            final AtomicInteger regions = new AtomicInteger();
+            try {
+                COMPUTE_FOR_ALL_REGIONS.invoke(REGIONISER.get(world), (Consumer<Object>) region -> regions.incrementAndGet());
+            } catch (ReflectiveOperationException e) {
+                return false;
+            }
+            return regions.get() > 0;
+        }
+
+    }
+    //FAWE end
 
     //util
     @SuppressWarnings("unchecked")

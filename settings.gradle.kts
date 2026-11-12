@@ -55,9 +55,13 @@ includeBuild("build-logic")
 
 include("worldedit-libs")
 
-listOf("1_21", "1_21_4", "1_21_5", "1_21_6", "1_21_9", "1_21_11", "26.1", "26.2").forEach {
-    include("worldedit-bukkit:adapters:adapter-$it")
-}
+// Optional: -Pfawe.adapters=1_21_11 (comma separated) builds only the listed adapters, e.g. for a quick test jar.
+val onlyAdapters = providers.gradleProperty("fawe.adapters").orNull?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+listOf("1_21", "1_21_4", "1_21_5", "1_21_6", "1_21_9", "1_21_11", "26.1", "26.2")
+    .filter { onlyAdapters == null || it in onlyAdapters }
+    .forEach {
+        include("worldedit-bukkit:adapters:adapter-$it")
+    }
 
 listOf("bukkit", "core", "cli").forEach {
     include("worldedit-libs:$it")

@@ -24,7 +24,7 @@ public class RenderListener implements Listener {
 
     private final Map<UUID, int[]> views = new ConcurrentHashMap<>();
     private Iterator<Map.Entry<UUID, int[]>> entrySet;
-    private int OFFSET = 6;
+    private volatile int OFFSET = 6;
 
     public RenderListener(Plugin plugin) {
         Bukkit.getPluginManager().registerEvents(this, plugin);

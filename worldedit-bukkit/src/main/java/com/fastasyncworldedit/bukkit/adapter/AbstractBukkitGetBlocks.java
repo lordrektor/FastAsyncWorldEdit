@@ -1,5 +1,7 @@
 package com.fastasyncworldedit.bukkit.adapter;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.configuration.Settings;
 import com.fastasyncworldedit.core.internal.exception.FaweException;
@@ -54,6 +56,13 @@ public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends C
     }
 
     protected abstract void send();
+
+    /**
+     * Get the Bukkit world of this chunk. Only needed (and only implemented) by adapters that support Folia.
+     */
+    protected org.bukkit.World getBukkitWorld() {
+        return null;
+    }
 
     protected abstract CompletableFuture<LevelChunk> ensureLoaded(ServerLevel serverLevel);
 
@@ -170,6 +179,16 @@ public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends C
                     throw e;
                 }
             };
+            //FAWE start - Folia: block entities and entities of a chunk may only be touched by the region thread owning it
+            if (FoliaSupport.isFolia()) {
+                final org.bukkit.World world = getBukkitWorld();
+                if (world == null) {
+                    throw new UnsupportedOperationException("This Minecraft version is not supported by FAWE on Folia");
+                }
+                //noinspection unchecked - required at compile time
+                return (T) (Future) FoliaTaskManager.get().submitAtChunk(world, chunkX, chunkZ, chain);
+            }
+            //FAWE end
             //noinspection unchecked - required at compile time
             return (T) (Future) queueHandler.sync(chain);
         } else {

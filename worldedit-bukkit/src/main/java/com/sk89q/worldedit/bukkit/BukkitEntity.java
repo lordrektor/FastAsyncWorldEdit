@@ -19,6 +19,8 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.bukkit.adapter.BukkitImplAdapter;
 import com.sk89q.worldedit.entity.BaseEntity;
@@ -84,6 +86,12 @@ public class BukkitEntity implements Entity {
     public boolean setLocation(Location location) {
         org.bukkit.entity.Entity entity = entityRef.get();
         if (entity != null) {
+            //FAWE start - Folia only allows asynchronous teleports
+            if (FoliaSupport.isFolia()) {
+                entity.teleportAsync(BukkitAdapter.adapt(location));
+                return true;
+            }
+            //FAWE end
             return entity.teleport(BukkitAdapter.adapt(location));
         } else {
             return false;
@@ -100,6 +108,22 @@ public class BukkitEntity implements Entity {
 
             BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
             if (adapter != null) {
+                //FAWE start - Folia: entity data may only be read on the thread owning the entity
+                if (FoliaSupport.isFolia()) {
+                    try {
+                        return FoliaTaskManager.get().callWithEntity(entity, () -> {
+                            BaseEntity state = adapter.getEntity(entity);
+                            if (state != null) {
+                                // resolve lazily-saved NBT now, whilst on the owning thread
+                                state.getNbt();
+                            }
+                            return state;
+                        });
+                    } catch (IllegalStateException removed) {
+                        return null;
+                    }
+                }
+                //FAWE end
                 return adapter.getEntity(entity);
             } else {
                 return null;
@@ -111,6 +135,27 @@ public class BukkitEntity implements Entity {
 
     @Override
     public boolean remove() {
+        //FAWE start - Folia: remove on the thread owning the entity
+        if (FoliaSupport.isFolia()) {
+            org.bukkit.entity.Entity foliaEntity = entityRef.get();
+            if (foliaEntity == null) {
+                return true;
+            }
+            try {
+                return FoliaTaskManager.get().callWithEntity(foliaEntity, () -> {
+                    try {
+                        foliaEntity.remove();
+                    } catch (UnsupportedOperationException e) {
+                        return false;
+                    }
+                    return foliaEntity.isDead();
+                });
+            } catch (IllegalStateException retired) {
+                // The entity was removed or unloaded before its thread got to the task. Nothing was removed by us.
+                return false;
+            }
+        }
+        //FAWE end
         // synchronize the whole method, not just the remove operation as we always need to synchronize and
         // can make sure the entity reference was not invalidated in the few milliseconds between the next available tick (lol)
         return TaskManager.taskManager().sync(() -> {

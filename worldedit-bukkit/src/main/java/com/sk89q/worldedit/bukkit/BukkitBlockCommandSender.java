@@ -19,6 +19,8 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.WorldEdit;
 import com.sk89q.worldedit.extension.platform.AbstractCommandBlockActor;
@@ -62,11 +64,22 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
         return sender.getName();
     }
 
+    //FAWE start - Folia: a command block is owned by the region thread of its chunk
+    private void runSync(java.util.function.Supplier<Object> task) {
+        if (FoliaSupport.isFolia()) {
+            final org.bukkit.block.Block block = sender.getBlock();
+            FoliaTaskManager.get().callAtChunk(block.getWorld(), block.getX() >> 4, block.getZ() >> 4, task);
+        } else {
+            TaskManager.taskManager().sync(task);
+        }
+    }
+    //FAWE end
+
     @Override
     @Deprecated
     public void printRaw(String msg) {
         //FAWE start - ensure executed on main thread
-        TaskManager.taskManager().sync(() -> {
+        runSync(() -> {
             for (String part : msg.split("\n")) {
                 sender.sendMessage(part);
             }
@@ -79,7 +92,7 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
     @Deprecated
     public void print(String msg) {
         //FAWE start - ensure executed on main thread
-        TaskManager.taskManager().sync(() -> {
+        runSync(() -> {
             for (String part : msg.split("\n")) {
                 print(TextComponent.of(part, TextColor.LIGHT_PURPLE));
             }
@@ -92,7 +105,7 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
     @Deprecated
     public void printDebug(String msg) {
         //FAWE start - ensure executed on main thread
-        TaskManager.taskManager().sync(() -> {
+        runSync(() -> {
             for (String part : msg.split("\n")) {
                 print(TextComponent.of(part, TextColor.GRAY));
             }
@@ -105,7 +118,7 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
     @Deprecated
     public void printError(String msg) {
         //FAWE start - ensure executed on main thread
-        TaskManager.taskManager().sync(() -> {
+        runSync(() -> {
             for (String part : msg.split("\n")) {
                 print(TextComponent.of(part, TextColor.RED));
             }
@@ -117,7 +130,7 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
     @Override
     public void print(Component component) {
         //FAWE start - ensure executed on main thread
-        TaskManager.taskManager().sync(() -> {
+        runSync(() -> {
             TextAdapter.sendMessage(sender, WorldEditText.format(component, getLocale()));
             return null;
         });
@@ -191,6 +204,18 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
 
             @Override
             public boolean isActive() {
+                //FAWE start - Folia has no Bukkit scheduler and no primary thread
+                if (FoliaSupport.isFolia()) {
+                    final org.bukkit.block.Block block = sender.getBlock();
+                    if (Bukkit.isOwnedByCurrentRegion(block)) {
+                        updateActive();
+                    } else {
+                        // we should update it eventually
+                        Bukkit.getRegionScheduler().execute(plugin, block.getLocation(), this::updateActive);
+                    }
+                    return active;
+                }
+                //FAWE end
                 if (Bukkit.isPrimaryThread()) {
                     // we can update eagerly
                     updateActive();

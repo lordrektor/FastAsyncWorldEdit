@@ -19,6 +19,8 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.sk89q.worldedit.entity.metadata.EntityProperties;
 import org.bukkit.entity.AbstractVillager;
 import org.bukkit.entity.Ambient;
@@ -146,14 +148,30 @@ class BukkitEntityProperties implements EntityProperties {
         return entity instanceof Golem;
     }
 
+    //FAWE start - Folia: entity state may only be read on the thread owning the entity
+    private boolean onOwningThread(java.util.function.BooleanSupplier check) {
+        if (!FoliaSupport.isFolia()) {
+            return check.getAsBoolean();
+        }
+        try {
+            return FoliaTaskManager.get().callWithEntity(entity, check::getAsBoolean);
+        } catch (IllegalStateException removed) {
+            return false;
+        }
+    }
+    //FAWE end
+
     @Override
     public boolean isTamed() {
-        return entity instanceof Tameable && ((Tameable) entity).isTamed();
+        if (!(entity instanceof Tameable tameable)) {
+            return false;
+        }
+        return onOwningThread(tameable::isTamed);
     }
 
     @Override
     public boolean isTagged() {
-        return entity instanceof LivingEntity && entity.getCustomName() != null;
+        return entity instanceof LivingEntity && onOwningThread(() -> entity.getCustomName() != null);
     }
 
     @Override

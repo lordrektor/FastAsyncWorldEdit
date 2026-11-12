@@ -19,6 +19,7 @@
 
 package com.sk89q.worldedit.function.entity;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.WorldEdit;
 import com.sk89q.worldedit.WorldEditException;
@@ -176,6 +177,7 @@ public class ExtentEntityCopy implements EntityFunction {
             newLocation = new Location(destination, newPosition.add(to.round().add(0.5, 0.5, 0.5)), newDirection);
 
             // Some entities store their position data in NBT
+            final UUID originalUuid = state.getUUID();
             state = transformNbtData(state);
 
             boolean success = destination.createEntity(newLocation, state) != null;
@@ -183,7 +185,7 @@ public class ExtentEntityCopy implements EntityFunction {
             // Remove
             if (isRemoving() && success) {
                 //FAWE start
-                UUID uuid = entity.getState().getUUID();
+                UUID uuid = originalUuid;
                 if (uuid != null) {
                     if (source != null) {
                         source.removeEntity(
@@ -193,7 +195,12 @@ public class ExtentEntityCopy implements EntityFunction {
                                 uuid
                         );
                     } else {
-                        TaskManager.taskManager().sync(entity::remove);
+                        if (FoliaSupport.isFolia()) {
+                            // the entity removes itself on its owning thread
+                            entity.remove();
+                        } else {
+                            TaskManager.taskManager().sync(entity::remove);
+                        }
                         //FAWE end
                     }
                 }

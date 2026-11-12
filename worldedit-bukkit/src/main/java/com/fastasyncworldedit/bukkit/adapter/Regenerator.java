@@ -125,8 +125,11 @@ public abstract class Regenerator {
                 return source.getBiome(vec);
             });
         }
-        target.setBlocks(region, pattern);
-        TaskManager.taskManager().cancel(taskId);
+        try {
+            target.setBlocks(region, pattern);
+        } finally {
+            TaskManager.taskManager().cancel(taskId);
+        }
     }
 
     private abstract class ChunkwisePattern implements Pattern {

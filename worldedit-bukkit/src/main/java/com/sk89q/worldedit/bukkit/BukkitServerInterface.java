@@ -19,6 +19,7 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.bukkit.util.MinecraftVersion;
 import com.fastasyncworldedit.core.configuration.Settings;
 import com.fastasyncworldedit.core.extent.processor.PlacementStateProcessor;
@@ -135,6 +136,17 @@ public class BukkitServerInterface extends AbstractPlatform implements MultiUser
 
     @Override
     public int schedule(long delay, long period, Runnable task) {
+        //FAWE start - Folia has no Bukkit scheduler
+        if (FoliaSupport.isFolia()) {
+            Bukkit.getGlobalRegionScheduler().runAtFixedRate(
+                    plugin,
+                    scheduled -> task.run(),
+                    Math.max(1, delay),
+                    Math.max(1, period)
+            );
+            return 0;
+        }
+        //FAWE end
         return Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, task, delay, period);
     }
 
@@ -265,6 +277,11 @@ public class BukkitServerInterface extends AbstractPlatform implements MultiUser
 
     @Override
     public long getTickCount() {
+        //FAWE start - Folia: tick counters are per region and start at zero
+        if (FoliaSupport.isFolia()) {
+            return System.nanoTime() / 50_000_000L;
+        }
+        //FAWE end
         if (PaperLib.isPaper()) {
             return Bukkit.getCurrentTick();
         }

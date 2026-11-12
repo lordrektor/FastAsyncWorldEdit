@@ -19,6 +19,8 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.bukkit.util.WorldUnloadedException;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.FaweCache;
@@ -145,11 +147,69 @@ public class BukkitWorld extends AbstractWorld {
         }
     }
 
+    //FAWE start - Folia
+    /**
+     * Collect the entities of the loaded chunks of a region (or of all loaded chunks if region is null). Each chunk is
+     * read on the region thread owning it; all chunks are requested first and waited for afterwards.
+     */
+    private static List<Entity> getEntitiesFolia(World world, Region region) {
+        final FoliaTaskManager taskManager = FoliaTaskManager.get();
+        final List<java.util.concurrent.Future<Entity[]>> futures = new ArrayList<>();
+        if (region != null) {
+            for (com.sk89q.worldedit.math.BlockVector2 chunk : region.getChunks()) {
+                submitChunkEntities(taskManager, world, chunk.x(), chunk.z(), futures);
+            }
+        } else {
+            for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                submitChunkEntities(taskManager, world, chunk.getX(), chunk.getZ(), futures);
+            }
+        }
+        final List<Entity> result = new ArrayList<>();
+        for (java.util.concurrent.Future<Entity[]> future : futures) {
+            try {
+                java.util.Collections.addAll(result, taskManager.await(future));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (java.util.concurrent.ExecutionException e) {
+                LOGGER.warn("Could not read the entities of a chunk", e.getCause());
+            }
+        }
+        return result;
+    }
+
+    private static void submitChunkEntities(
+            FoliaTaskManager taskManager, World world, int chunkX, int chunkZ,
+            List<java.util.concurrent.Future<Entity[]>> futures
+    ) {
+        if (!world.isChunkLoaded(chunkX, chunkZ)) {
+            return;
+        }
+        futures.add(taskManager.submitAtChunk(world, chunkX, chunkZ, () -> world.isChunkLoaded(chunkX, chunkZ)
+                ? world.getChunkAt(chunkX, chunkZ).getEntities()
+                : new Entity[0]));
+    }
+
+    /**
+     * Folia: get if the current thread has to hand work for the given block over to the thread owning it.
+     */
+    private boolean mustHopFolia(int blockX, int blockZ) {
+        return FoliaSupport.isFolia() && !Bukkit.isOwnedByCurrentRegion(getWorld(), blockX >> 4, blockZ >> 4);
+    }
+
+    private <T> T hopFolia(int blockX, int blockZ, java.util.function.Supplier<T> task) {
+        return FoliaTaskManager.get().callAtChunk(getWorld(), blockX >> 4, blockZ >> 4, task);
+    }
+    //FAWE end
+
     @Override
     public List<com.sk89q.worldedit.entity.Entity> getEntities(Region region) {
         World world = getWorld();
 
-        List<Entity> ents = TaskManager.taskManager().sync(world::getEntities);
+        //FAWE - Folia: entities are collected chunk by chunk on the region threads owning them
+        List<Entity> ents = FoliaSupport.isFolia()
+                ? getEntitiesFolia(world, region)
+                : TaskManager.taskManager().sync(world::getEntities);
         List<com.sk89q.worldedit.entity.Entity> entities = new ArrayList<>();
         for (Entity ent : ents) {
             if (region.contains(BukkitAdapter.asBlockVector(ent.getLocation()))) {
@@ -163,7 +223,9 @@ public class BukkitWorld extends AbstractWorld {
     public List<com.sk89q.worldedit.entity.Entity> getEntities() {
         List<com.sk89q.worldedit.entity.Entity> list = new ArrayList<>();
 
-        List<Entity> ents = TaskManager.taskManager().sync(getWorld()::getEntities);
+        List<Entity> ents = FoliaSupport.isFolia()
+                ? getEntitiesFolia(getWorld(), null)
+                : TaskManager.taskManager().sync(getWorld()::getEntities);
         for (Entity entity : ents) {
             list.add(BukkitAdapter.adapt(entity));
         }
@@ -173,6 +235,11 @@ public class BukkitWorld extends AbstractWorld {
     @Override
     public int removeEntities(final Region region) {
         List<com.sk89q.worldedit.entity.Entity> entities = getEntities(region);
+        //FAWE start - Folia: each entity removes itself on its owning thread
+        if (FoliaSupport.isFolia()) {
+            return entities.stream().mapToInt(entity -> entity.remove() ? 1 : 0).sum();
+        }
+        //FAWE end
         return TaskManager.taskManager().sync(() -> entities.stream()
                 .mapToInt(entity -> entity.remove() ? 1 : 0).sum()
         );
@@ -279,6 +346,9 @@ public class BukkitWorld extends AbstractWorld {
         checkNotNull(pt);
         //FAWE start - safe edit region
         testCoords(pt);
+        if (mustHopFolia(pt.x(), pt.z())) {
+            return hopFolia(pt.x(), pt.z(), () -> clearContainerBlockContents(pt));
+        }
         //FAWE end
         BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
         if (adapter != null) {
@@ -384,6 +454,15 @@ public class BukkitWorld extends AbstractWorld {
 
     @Override
     public void dropItem(Vector3 pt, BaseItemStack item) {
+        //FAWE start - Folia
+        if (mustHopFolia(pt.blockX(), pt.blockZ())) {
+            hopFolia(pt.blockX(), pt.blockZ(), () -> {
+                dropItem(pt, item);
+                return null;
+            });
+            return;
+        }
+        //FAWE end
         World world = getWorld();
         world.dropItemNaturally(BukkitAdapter.adapt(world, pt), BukkitAdapter.adapt(item));
     }
@@ -397,7 +476,10 @@ public class BukkitWorld extends AbstractWorld {
         //FAWE start
         int X = pt.x() >> 4;
         int Z = pt.z() >> 4;
-        if (Fawe.isMainThread()) {
+        if (FoliaSupport.isFolia()) {
+            // a tick thread may only load chunks of its own region synchronously, so always ask asynchronously
+            world.getChunkAtAsync(X, Z, true);
+        } else if (Fawe.isMainThread()) {
             world.getChunkAt(X, Z);
         } else if (PaperLib.isPaper()) {
             PaperLib.getChunkAtAsync(world, X, Z, true);
@@ -445,6 +527,14 @@ public class BukkitWorld extends AbstractWorld {
     public void fixAfterFastMode(Iterable<BlockVector2> chunks) {
         World world = getWorld();
         for (BlockVector2 chunkPos : chunks) {
+            //FAWE start - Folia
+            if (FoliaSupport.isFolia()) {
+                TaskManager.taskManager().taskAt(
+                        () -> world.refreshChunk(chunkPos.x(), chunkPos.z()), this, chunkPos.x(), chunkPos.z()
+                );
+                continue;
+            }
+            //FAWE end
             world.refreshChunk(chunkPos.x(), chunkPos.z());
         }
     }
@@ -490,6 +580,12 @@ public class BukkitWorld extends AbstractWorld {
 
     @Override
     public void setWeather(WeatherType weatherType) {
+        //FAWE start - Folia: the weather belongs to the global region
+        if (FoliaSupport.isFolia() && !FoliaTaskManager.isGlobalTickThread()) {
+            FoliaTaskManager.get().runGlobal(() -> setWeather(weatherType));
+            return;
+        }
+        //FAWE end
         if (weatherType == WeatherTypes.THUNDER_STORM) {
             getWorld().setThundering(true);
         } else if (weatherType == WeatherTypes.RAIN) {
@@ -502,6 +598,12 @@ public class BukkitWorld extends AbstractWorld {
 
     @Override
     public void setWeather(WeatherType weatherType, long duration) {
+        //FAWE start - Folia: the weather belongs to the global region
+        if (FoliaSupport.isFolia() && !FoliaTaskManager.isGlobalTickThread()) {
+            FoliaTaskManager.get().runGlobal(() -> setWeather(weatherType, duration));
+            return;
+        }
+        //FAWE end
         // Who named these methods...
         if (weatherType == WeatherTypes.THUNDER_STORM) {
             getWorld().setThundering(true);
@@ -526,6 +628,13 @@ public class BukkitWorld extends AbstractWorld {
     public void simulateBlockMine(BlockVector3 pt) {
         //FAWE start - safe edit region
         testCoords(pt);
+        if (mustHopFolia(pt.x(), pt.z())) {
+            hopFolia(pt.x(), pt.z(), () -> {
+                simulateBlockMine(pt);
+                return null;
+            });
+            return;
+        }
         //FAWE end
         getWorld().getBlockAt(pt.x(), pt.y(), pt.z()).breakNaturally();
     }
@@ -533,6 +642,9 @@ public class BukkitWorld extends AbstractWorld {
     //FAWE start
     @Override
     public Collection<BaseItemStack> getBlockDrops(BlockVector3 position) {
+        if (mustHopFolia(position.x(), position.z())) {
+            return hopFolia(position.x(), position.z(), () -> getBlockDrops(position));
+        }
         return getWorld().getBlockAt(position.x(), position.y(), position.z()).getDrops().stream()
                 .map(BukkitAdapter::adapt).collect(Collectors.toList());
     }
@@ -578,6 +690,11 @@ public class BukkitWorld extends AbstractWorld {
         //FAWE start - safe edit region
         testCoords(position);
         //FAWE end
+        //FAWE start - Folia: a tick thread may not load chunks of another region
+        if (FoliaSupport.isTickThread() && mustHopFolia(position.x(), position.z())) {
+            return hopFolia(position.x(), position.z(), () -> getBlock(position));
+        }
+        //FAWE end
         BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
         if (adapter != null) {
             try {
@@ -601,6 +718,10 @@ public class BukkitWorld extends AbstractWorld {
     public <B extends BlockStateHolder<B>> boolean setBlock(BlockVector3 position, B block, SideEffectSet sideEffects) {
         //FAWE start - safe edit region
         testCoords(position);
+        // Folia: the block change and its side effects (neighbour updates, light, block entities) run on the owning thread
+        if (mustHopFolia(position.x(), position.z())) {
+            return hopFolia(position.x(), position.z(), () -> setBlock(position, block, sideEffects));
+        }
         //FAWE end
         if (worldNativeAccess != null) {
             try {
@@ -625,6 +746,14 @@ public class BukkitWorld extends AbstractWorld {
     public BaseBlock getFullBlock(BlockVector3 position) {
         //FAWE start - safe edit region
         testCoords(position);
+        //FAWE end
+        //FAWE start - Folia: block entities may only be read by the thread owning the chunk
+        if (mustHopFolia(position.x(), position.z())) {
+            if (!FoliaSupport.isTickThread() && !getBlock(position).getBlockType().getMaterial().hasContainer()) {
+                return getBlock(position).toBaseBlock();
+            }
+            return hopFolia(position.x(), position.z(), () -> getFullBlock(position));
+        }
         //FAWE end
         BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
         if (adapter != null) {
@@ -652,6 +781,9 @@ public class BukkitWorld extends AbstractWorld {
     ) {
         //FAWE start - safe edit region
         testCoords(position);
+        if (mustHopFolia(position.x(), position.z())) {
+            return hopFolia(position.x(), position.z(), () -> applySideEffects(position, previousType, sideEffectSet));
+        }
         //FAWE end
         if (worldNativeAccess != null) {
             worldNativeAccess.applySideEffects(position, previousType, sideEffectSet);
@@ -668,6 +800,11 @@ public class BukkitWorld extends AbstractWorld {
     public boolean useItem(BlockVector3 position, BaseItem item, Direction face) {
         //FAWE start - safe edit region
         testCoords(position);
+        //FAWE end
+        //FAWE start - Folia
+        if (mustHopFolia(position.x(), position.z())) {
+            return hopFolia(position.x(), position.z(), () -> useItem(position, item, face));
+        }
         //FAWE end
         BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
         if (adapter != null) {
@@ -702,6 +839,11 @@ public class BukkitWorld extends AbstractWorld {
         //FAWE start - safe edit region
         testCoords(position);
         //FAWE end
+        //FAWE start - Folia
+        if (mustHopFolia(position.x(), position.z())) {
+            return hopFolia(position.x(), position.z(), () -> setBiome(position, biome));
+        }
+        //FAWE end
         if (HAS_3D_BIOMES) {
             getWorld().setBiome(position.x(), position.y(), position.z(), BukkitAdapter.adapt(biome));
         } else {
@@ -731,6 +873,12 @@ public class BukkitWorld extends AbstractWorld {
     @Override
     public void refreshChunk(int chunkX, int chunkZ) {
         testCoords(BlockVector3.at(chunkX << 4, 0, chunkZ << 4));
+        //FAWE start - Folia
+        if (mustHopFolia(chunkX << 4, chunkZ << 4)) {
+            TaskManager.taskManager().taskAt(() -> getWorld().refreshChunk(chunkX, chunkZ), this, chunkX, chunkZ);
+            return;
+        }
+        //FAWE end
         getWorld().refreshChunk(chunkX, chunkZ);
     }
 

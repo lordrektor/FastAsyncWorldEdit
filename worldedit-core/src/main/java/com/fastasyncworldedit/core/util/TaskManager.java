@@ -4,15 +4,19 @@ import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.configuration.Settings;
 import com.fastasyncworldedit.core.queue.implementation.QueueHandler;
 import com.fastasyncworldedit.core.util.task.RunnableVal;
+import com.sk89q.worldedit.entity.Player;
 import com.sk89q.worldedit.internal.util.LogManagerCompat;
+import com.sk89q.worldedit.world.World;
 import org.apache.logging.log4j.Logger;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -372,5 +376,78 @@ public abstract class TaskManager {
             throw new RuntimeException(e);
         }
     }
+
+    //FAWE start - Folia
+    /**
+     * Run a task on the thread that owns the given chunk and wait for it to finish.
+     * <p>
+     * On Paper/Spigot this is the same as {@link #sync(Supplier)}. On Folia the task runs on the region thread owning the
+     * chunk. Anything that touches blocks, block entities or entities of a chunk must go through this rather than
+     * {@link #sync(Supplier)}.
+     *
+     * @param supplier the task
+     * @param world    world the chunk is in
+     * @param chunkX   chunk x
+     * @param chunkZ   chunk z
+     * @return the task's result
+     */
+    public <T> T syncAt(@Nonnull final Supplier<T> supplier, @Nonnull World world, int chunkX, int chunkZ) {
+        return sync(supplier);
+    }
+
+    /**
+     * Run a task on the thread that owns the given player and wait for it to finish.
+     * <p>
+     * On Paper/Spigot this is the same as {@link #sync(Supplier)}.
+     *
+     * @param supplier the task
+     * @param player   the player whose owning thread should run the task
+     * @return the task's result
+     * @throws IllegalStateException if the player is no longer online (Folia only)
+     */
+    public <T> T syncWith(@Nonnull final Supplier<T> supplier, @Nonnull Player player) {
+        return sync(supplier);
+    }
+
+    /**
+     * Run a task on the thread that owns the given chunk, without waiting for it.
+     * <p>
+     * On Paper/Spigot this is the same as {@link #task(Runnable)}.
+     */
+    public void taskAt(@Nonnull final Runnable runnable, @Nonnull World world, int chunkX, int chunkZ) {
+        task(runnable);
+    }
+
+    /**
+     * Submit a task to the thread that owns the given chunk.
+     * <p>
+     * On Paper/Spigot this is the same as {@link QueueHandler#sync(Callable)}.
+     *
+     * @return future completed with the task's result once it ran
+     */
+    public <T> Future<T> submitAt(@Nonnull final Callable<T> callable, @Nonnull World world, int chunkX, int chunkZ)
+            throws Exception {
+        return Fawe.instance().getQueueHandler().sync(callable);
+    }
+
+    /**
+     * Get if the current thread is allowed to touch the given chunk directly.
+     * <p>
+     * On Paper/Spigot this is {@link Fawe#isMainThread()}.
+     */
+    public boolean isOwnedByCurrentThread(@Nonnull World world, int chunkX, int chunkZ) {
+        return Fawe.isMainThread();
+    }
+
+    /**
+     * Wait for a future. If the current thread is a Folia tick thread, tasks submitted through {@link #syncAt},
+     * {@link #submitAt} and {@link #taskAt} that belong to this thread are run while waiting, so that an edit started
+     * from a tick thread cannot deadlock on itself.
+     */
+    public <T> T await(@Nonnull Future<T> future) throws InterruptedException, ExecutionException {
+        return future.get();
+    }
+    //FAWE end
+
 
 }

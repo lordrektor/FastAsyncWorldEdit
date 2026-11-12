@@ -1,5 +1,6 @@
 package com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.bukkit.adapter.FaweAdapter;
 import com.fastasyncworldedit.bukkit.adapter.NMSRelighterFactory;
 import com.fastasyncworldedit.core.FaweCache;
@@ -545,21 +546,100 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
 
     @Override
     protected void preCaptureStates(final ServerLevel serverLevel) {
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia()) {
+            FoliaCapture.set(serverLevel, true);
+            return;
+        }
+        //FAWE end
         serverLevel.captureTreeGeneration = true;
         serverLevel.captureBlockStates = true;
     }
 
     @Override
     protected List<org.bukkit.block.BlockState> getCapturedBlockStatesCopy(final ServerLevel serverLevel) {
-        return new ArrayList<>(serverLevel.capturedBlockStates.values());
+        return new ArrayList<>(capturedStates(serverLevel).values());
     }
 
     @Override
     protected void postCaptureBlockStates(final ServerLevel serverLevel) {
+        //FAWE start - Folia
+        if (FoliaSupport.isFolia()) {
+            FoliaCapture.set(serverLevel, false);
+            FoliaCapture.states(serverLevel).clear();
+            return;
+        }
+        //FAWE end
         serverLevel.captureBlockStates = false;
         serverLevel.captureTreeGeneration = false;
         serverLevel.capturedBlockStates.clear();
     }
+
+    //FAWE start - Folia
+    private static Map<BlockPos, CraftBlockState> capturedStates(final ServerLevel serverLevel) {
+        if (FoliaSupport.isFolia()) {
+            return FoliaCapture.states(serverLevel);
+        }
+        return serverLevel.capturedBlockStates;
+    }
+
+    /**
+     * On Folia the block-capture state is not kept on the level but in the data of the region currently ticking
+     * ("current world data"). This adapter is compiled against Paper, so that state is reached reflectively. It can only be
+     * used from the region thread that owns the position being generated at.
+     */
+    private static final class FoliaCapture {
+
+        private static final Method GET_CURRENT_WORLD_DATA;
+        private static final Field CAPTURE_BLOCK_STATES;
+        private static final Field CAPTURE_TREE_GENERATION;
+        private static final Field CAPTURED_BLOCK_STATES;
+
+        static {
+            try {
+                GET_CURRENT_WORLD_DATA = net.minecraft.world.level.Level.class.getMethod("getCurrentWorldData");
+                Class<?> worldData = GET_CURRENT_WORLD_DATA.getReturnType();
+                CAPTURE_BLOCK_STATES = worldData.getField("captureBlockStates");
+                CAPTURE_TREE_GENERATION = worldData.getField("captureTreeGeneration");
+                CAPTURED_BLOCK_STATES = worldData.getField("capturedBlockStates");
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("Unsupported Folia version: cannot find the block capture state", e);
+            }
+        }
+
+        private static Object worldData(ServerLevel serverLevel) {
+            try {
+                Object data = GET_CURRENT_WORLD_DATA.invoke(serverLevel);
+                if (data == null) {
+                    throw new IllegalStateException("Block capture is only possible on the region thread owning the position");
+                }
+                return data;
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        static void set(ServerLevel serverLevel, boolean capture) {
+            Object data = worldData(serverLevel);
+            try {
+                CAPTURE_TREE_GENERATION.setBoolean(data, capture);
+                CAPTURE_BLOCK_STATES.setBoolean(data, capture);
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        static Map<BlockPos, CraftBlockState> states(ServerLevel serverLevel) {
+            try {
+                return (Map<BlockPos, CraftBlockState>) CAPTURED_BLOCK_STATES.get(worldData(serverLevel));
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+    }
+    //FAWE end
     @Override
     public boolean generateFeature(ConfiguredFeatureType feature, World world, EditSession editSession, BlockVector3 pt) {
         ServerLevel serverLevel = getServerLevel(world);
@@ -571,7 +651,8 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                 .getValue(Identifier.tryParse(feature.id()));
 
         FaweBlockStateListPopulator populator = new FaweBlockStateListPopulator(serverLevel);
-        List<CraftBlockState> placed = TaskManager.taskManager().sync(() -> {
+        // Folia: runs on the region thread owning the origin (syncAt is the main thread elsewhere)
+        List<CraftBlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {
                 if (!configuredFeature.place(
@@ -583,12 +664,12 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                     return null;
                 }
                 List<CraftBlockState> placedBlocks = new ArrayList<>(populator.getSnapshotBlocks());
-                placedBlocks.addAll(serverLevel.capturedBlockStates.values());
+                placedBlocks.addAll(capturedStates(serverLevel).values());
                 return placedBlocks;
             } finally {
                 postCaptureBlockStates(serverLevel);
             }
-        });
+        }, BukkitAdapter.adapt(world), pt.x() >> 4, pt.z() >> 4);
 
         return placeFeatureIntoSession(editSession, populator, placed);
     }
@@ -608,7 +689,8 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
         TransformerGeneratorAccess access = new TransformerGeneratorAccess();
         FaweBlockStateListPopulator populator = new FaweBlockStateListPopulator(serverLevel);
         access.setDelegate(populator);
-        List<CraftBlockState> placed = TaskManager.taskManager().sync(() -> {
+        // Folia: runs on the region thread owning the origin (syncAt is the main thread elsewhere)
+        List<CraftBlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {
                 StructureStart structureStart = structure.generate(
@@ -651,13 +733,13 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                             ), chunkPosx
                     ));
                     List<CraftBlockState> placedBlocks = new ArrayList<>(populator.getSnapshotBlocks());
-                    placedBlocks.addAll(serverLevel.capturedBlockStates.values());
+                    placedBlocks.addAll(capturedStates(serverLevel).values());
                     return placedBlocks;
                 }
             } finally {
                 postCaptureBlockStates(serverLevel);
             }
-        });
+        }, BukkitAdapter.adapt(world), pt.x() >> 4, pt.z() >> 4);
 
         return placeFeatureIntoSession(editSession, populator, placed);
     }
@@ -678,7 +760,8 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                 .getValue(Identifier.tryParse(treeType.id()));
 
         FaweBlockStateListPopulator populator = new FaweBlockStateListPopulator(serverLevel);
-        List<CraftBlockState> placed = TaskManager.taskManager().sync(() -> {
+        // Folia: runs on the region thread owning the origin (syncAt is the main thread elsewhere)
+        List<CraftBlockState> placed = TaskManager.taskManager().syncAt(() -> {
             preCaptureStates(serverLevel);
             try {
                 if (!placedFeature.place(
@@ -690,12 +773,12 @@ public final class PaperweightFaweAdapter extends FaweAdapter<net.minecraft.nbt.
                     return null;
                 }
                 List<CraftBlockState> placedBlocks = new ArrayList<>(populator.getSnapshotBlocks());
-                placedBlocks.addAll(serverLevel.capturedBlockStates.values());
+                placedBlocks.addAll(capturedStates(serverLevel).values());
                 return placedBlocks;
             } finally {
                 postCaptureBlockStates(serverLevel);
             }
-        });
+        }, BukkitAdapter.adapt(world), pt.x() >> 4, pt.z() >> 4);
 
         return placeFeatureIntoSession(session, populator, placed);
     }

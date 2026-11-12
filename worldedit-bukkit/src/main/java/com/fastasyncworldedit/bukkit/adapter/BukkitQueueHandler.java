@@ -1,5 +1,6 @@
 package com.fastasyncworldedit.bukkit.adapter;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import co.aikar.timings.Timings;
 import com.fastasyncworldedit.bukkit.listener.ChunkListener;
 import com.fastasyncworldedit.core.queue.implementation.QueueHandler;
@@ -31,7 +32,8 @@ public class BukkitQueueHandler extends QueueHandler {
     @Override
     public void startUnsafe(boolean parallel) {
         ChunkListener.physicsFreeze = true;
-        if (parallel) {
+        // Folia: there is no async catcher or timings to toggle, thread ownership is checked per region instead
+        if (parallel && !FoliaSupport.isFolia()) {
             try {
                 asyncCatcher.setBoolean(asyncCatcher, false);
                 timingsEnabled = Timings.isTimingsEnabled();
@@ -51,7 +53,7 @@ public class BukkitQueueHandler extends QueueHandler {
     @Override
     public void endUnsafe(boolean parallel) {
         ChunkListener.physicsFreeze = false;
-        if (parallel) {
+        if (parallel && !FoliaSupport.isFolia()) {
             try {
                 asyncCatcher.setBoolean(asyncCatcher, true);
                 if (timingsEnabled) {

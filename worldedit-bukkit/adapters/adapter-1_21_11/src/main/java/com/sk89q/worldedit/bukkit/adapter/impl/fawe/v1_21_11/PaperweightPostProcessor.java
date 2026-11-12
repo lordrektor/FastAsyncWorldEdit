@@ -1,5 +1,6 @@
 package com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11;
 
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.configuration.Settings;
 import com.fastasyncworldedit.core.extent.processor.ProcessorScope;
 import com.fastasyncworldedit.core.queue.IBatchProcessor;
@@ -7,6 +8,7 @@ import com.fastasyncworldedit.core.queue.IChunk;
 import com.fastasyncworldedit.core.queue.IChunkGet;
 import com.fastasyncworldedit.core.queue.IChunkSet;
 import com.fastasyncworldedit.core.registry.state.PropertyKey;
+import com.sk89q.worldedit.bukkit.WorldEditPlugin;
 import com.sk89q.worldedit.extent.Extent;
 import com.sk89q.worldedit.world.block.BlockState;
 import com.sk89q.worldedit.world.block.BlockTypes;
@@ -15,8 +17,11 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.Fluids;
+import org.bukkit.Bukkit;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 
 public class PaperweightPostProcessor implements IBatchProcessor {
 
@@ -34,6 +39,9 @@ public class PaperweightPostProcessor implements IBatchProcessor {
             return;
         }
         PaperweightGetBlocks_Copy getBlocks = (PaperweightGetBlocks_Copy) iChunkGet;
+        //FAWE start - Folia: scheduled ticks are kept per region and may only be added by the owning region thread
+        final List<Runnable> ticks = FoliaSupport.isFolia() ? new ArrayList<>() : null;
+        //FAWE end
         layer:
         for (int layer = iChunkSet.getMinSectionPosition(); layer <= iChunkSet.getMaxSectionPosition(); layer++) {
             char[] set = iChunkSet.loadIfPresent(layer);
@@ -89,7 +97,7 @@ public class PaperweightPostProcessor implements IBatchProcessor {
                 BlockPos position = new BlockPos((chunk.getX() << 4) + x, (layer << 4) + y, (chunk.getZ() << 4) + z);
                 if (liquid || replacedWasLiquid) {
                     if (liquid) {
-                        addFluid(getBlocks.serverLevel, state, position);
+                        addFluid(getBlocks.serverLevel, state, position, ticks);
                         continue;
                     }
                     // If the replaced fluid (is?) adjacent to water. Do not bother to check adjacent chunks(sections) as this
@@ -98,10 +106,21 @@ public class PaperweightPostProcessor implements IBatchProcessor {
                     if (!wasAdjacentToWater(get, set, i, x, y, z)) {
                         continue;
                     }
-                    addFluid(getBlocks.serverLevel, replacedState, position);
+                    addFluid(getBlocks.serverLevel, replacedState, position, ticks);
                 }
             }
         }
+        //FAWE start - Folia: one task for the whole chunk
+        if (ticks != null && !ticks.isEmpty()) {
+            Bukkit.getRegionScheduler().execute(
+                    WorldEditPlugin.getInstance(),
+                    getBlocks.serverLevel.getWorld(),
+                    chunk.getX(),
+                    chunk.getZ(),
+                    () -> ticks.forEach(Runnable::run)
+            );
+        }
+        //FAWE end
     }
 
     @Nullable
@@ -158,13 +177,25 @@ public class PaperweightPostProcessor implements IBatchProcessor {
     }
 
     @SuppressWarnings("deprecation")
-    private void addFluid(final ServerLevel serverLevel, final BlockState replacedState, final BlockPos position) {
+    private void addFluid(
+            final ServerLevel serverLevel,
+            final BlockState replacedState,
+            final BlockPos position,
+            @Nullable final List<Runnable> ticks
+    ) {
         Fluid type;
         if (replacedState.getBlockType() == BlockTypes.LAVA) {
             type = (int) replacedState.getState(PropertyKey.LEVEL) == 0 ? Fluids.LAVA : Fluids.FLOWING_LAVA;
         } else {
             type = (int) replacedState.getState(PropertyKey.LEVEL) == 0 ? Fluids.WATER : Fluids.FLOWING_WATER;
         }
+        //FAWE start - Folia
+        if (ticks != null) {
+            final Fluid fluid = type;
+            ticks.add(() -> serverLevel.scheduleTick(position, fluid, fluid.getTickDelay(serverLevel)));
+            return;
+        }
+        //FAWE end
         serverLevel.scheduleTick(
                 position,
                 type,

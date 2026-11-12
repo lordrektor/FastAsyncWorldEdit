@@ -1,5 +1,13 @@
 package com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11;
 
+import java.util.Map;
+import java.util.List;
+import java.util.HashMap;
+import java.util.Collection;
+import java.util.ArrayList;
+import org.bukkit.Bukkit;
+import com.fastasyncworldedit.bukkit.util.FoliaTaskManager;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.math.IntPair;
 import com.fastasyncworldedit.core.util.TaskManager;
@@ -62,8 +70,74 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
         this.level = level;
         // Use the actual tick as minecraft-defined so we don't try to force blocks into the world when the server's already lagging.
         //  - With the caveat that we don't want to have too many cached changed (1024) so we'd flush those at 1024 anyway.
-        this.lastTick = new AtomicInteger(MinecraftServer.currentTick);
+        this.lastTick = new AtomicInteger(currentTick());
     }
+
+    //FAWE start - Folia
+    /**
+     * Folia has no global tick counter (the field does not exist there), wall-clock ticks are close enough to decide
+     * when to flush cached changes.
+     */
+    private static int currentTick() {
+        if (FoliaSupport.isFolia()) {
+            return (int) (System.nanoTime() / 50_000_000L);
+        }
+        return MinecraftServer.currentTick;
+    }
+
+    private boolean ownsChunk(int chunkX, int chunkZ) {
+        return Bukkit.isOwnedByCurrentRegion(getLevel().getWorld(), chunkX, chunkZ);
+    }
+
+    /**
+     * Apply cached changes on Folia: every chunk is changed and sent by the region thread owning it.
+     */
+    private void applyFolia(Collection<CachedChange> changes, Collection<IntPair> toSend, boolean wait) {
+        if (changes.isEmpty() && toSend.isEmpty()) {
+            return;
+        }
+        final CraftWorld world = getLevel().getWorld();
+        final boolean update = sideEffectSet != null && sideEffectSet.shouldApply(SideEffect.UPDATE);
+        final Map<IntPair, List<CachedChange>> byChunk = new HashMap<>();
+        for (CachedChange change : changes) {
+            byChunk.computeIfAbsent(
+                    new IntPair(change.levelChunk.locX, change.levelChunk.locZ),
+                    k -> new ArrayList<>()
+            ).add(change);
+        }
+        for (IntPair chunk : toSend) {
+            byChunk.computeIfAbsent(chunk, k -> new ArrayList<>());
+        }
+        final FoliaTaskManager taskManager = FoliaTaskManager.get();
+        final List<java.util.concurrent.Future<Object>> futures = new ArrayList<>();
+        for (Map.Entry<IntPair, List<CachedChange>> entry : byChunk.entrySet()) {
+            final IntPair chunk = entry.getKey();
+            final List<CachedChange> chunkChanges = entry.getValue();
+            futures.add(taskManager.submitAtChunk(world, chunk.x(), chunk.z(), () -> {
+                for (CachedChange cc : chunkChanges) {
+                    cc.levelChunk.setBlockState(cc.blockPos, cc.blockState, update ? 0 : 512);
+                }
+                if (toSend.contains(chunk)) {
+                    PaperweightPlatformAdapter.sendChunk(chunk, world.getHandle(), chunk.x(), chunk.z());
+                }
+                return null;
+            }));
+        }
+        if (!wait) {
+            return;
+        }
+        for (java.util.concurrent.Future<Object> future : futures) {
+            try {
+                taskManager.await(future);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw new RuntimeException(e.getCause());
+            }
+        }
+    }
+    //FAWE end
 
     private Level getLevel() {
         return Objects.requireNonNull(level.get(), "The reference to the world was lost");
@@ -98,8 +172,9 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
             LevelChunk levelChunk, BlockPos blockPos,
             net.minecraft.world.level.block.state.BlockState blockState
     ) {
-        int currentTick = MinecraftServer.currentTick;
-        if (Fawe.isMainThread()) {
+        int currentTick = currentTick();
+        //FAWE - Folia: only the region thread owning the chunk may change it directly
+        if (FoliaSupport.isFolia() ? ownsChunk(levelChunk.locX, levelChunk.locZ) : Fawe.isMainThread()) {
             return levelChunk.setBlockState(blockPos, blockState,
                     this.sideEffectSet.shouldApply(SideEffect.UPDATE) ? 0 : 512
             );
@@ -261,6 +336,10 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
                 }
             }
         };
+        if (FoliaSupport.isFolia()) {
+            applyFolia(changes, toSend, false);
+            return;
+        }
         TaskManager.taskManager().async(() -> TaskManager.taskManager().sync(runnableVal));
     }
 
@@ -277,7 +356,9 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
                 }
             }
         };
-        if (Fawe.isMainThread()) {
+        if (FoliaSupport.isFolia()) {
+            applyFolia(Set.copyOf(cachedChanges), Set.copyOf(cachedChunksToSend), true);
+        } else if (Fawe.isMainThread()) {
             runnableVal.run();
         } else {
             TaskManager.taskManager().sync(runnableVal);

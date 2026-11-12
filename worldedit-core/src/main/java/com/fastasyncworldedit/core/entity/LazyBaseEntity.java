@@ -1,6 +1,7 @@
 package com.fastasyncworldedit.core.entity;
 
 import com.fastasyncworldedit.core.Fawe;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.entity.BaseEntity;
 import com.sk89q.worldedit.world.entity.EntityType;
@@ -24,7 +25,8 @@ public class LazyBaseEntity extends BaseEntity {
         Supplier<LinCompoundTag> tmp = saveTag;
         if (tmp != null) {
             saveTag = null;
-            if (Fawe.isMainThread()) {
+            // On Folia the supplier itself hops to the thread owning the entity
+            if (Fawe.isMainThread() || FoliaSupport.isFolia()) {
                 setNbt(tmp.get());
             } else {
                 setNbt(TaskManager.taskManager().sync(tmp));

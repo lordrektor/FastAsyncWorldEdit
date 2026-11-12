@@ -17,8 +17,10 @@ import com.fastasyncworldedit.core.queue.IQueueExtent;
 import com.fastasyncworldedit.core.queue.implementation.blocks.CharSetBlocks;
 import com.fastasyncworldedit.core.queue.implementation.chunk.ChunkHolder;
 import com.fastasyncworldedit.core.queue.implementation.chunk.NullChunk;
+import com.fastasyncworldedit.core.util.FoliaSupport;
 import com.fastasyncworldedit.core.util.MathMan;
 import com.fastasyncworldedit.core.util.MemUtil;
+import com.fastasyncworldedit.core.util.TaskManager;
 import com.fastasyncworldedit.core.wrappers.WorldWrapper;
 import com.google.common.util.concurrent.Futures;
 import com.sk89q.worldedit.EditSession;
@@ -255,7 +257,13 @@ public class SingleThreadQueueExtent extends ExtentBatchProcessorHolder implemen
 
         chunk.invalidateWrapper();
 
-        if (Fawe.isMainThread()) {
+        //FAWE start - Folia: a tick thread may only apply a chunk inline if it owns that chunk
+        boolean inline = Fawe.isMainThread();
+        if (inline && FoliaSupport.isFolia()) {
+            inline = world != null && TaskManager.taskManager().isOwnedByCurrentThread(world, chunk.getX(), chunk.getZ());
+        }
+        //FAWE end
+        if (inline) {
             V result = (V) chunk.call();
             if (result == null) {
                 return (V) (Future) Futures.immediateFuture(null);
@@ -455,7 +463,8 @@ public class SingleThreadQueueExtent extends ExtentBatchProcessorHolder implemen
         Future first = submissions.poll();
         try {
             while (first != null) {
-                first = (Future) first.get();
+                //FAWE - Folia: a waiting tick thread keeps running the tasks aimed at its own region
+                first = (Future) TaskManager.taskManager().await(first);
             }
         } catch (FaweException e) {
             Fawe.handleFaweException(faweExceptionReasonsUsed, e, LOGGER);
